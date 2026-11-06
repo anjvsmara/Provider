@@ -10,7 +10,7 @@
       "author": "anjvsmara",
       "supportedTypes": [
         "movie",
-        "tv" , "anime"
+        "tv"
       ],
       "filename": "providers/kuronime.js",
       "enabled": true,
