@@ -1,10 +1,5 @@
-// Kuronime provider untuk Nuvio (runtime QuickJS).
-// Tanpa require, tanpa process.env, tanpa dependensi npm.
-// PENTING: isi TMDB_API_KEY dan MIRROR_PASSWORD sebelum build.
-// Jangan commit file yang sudah terisi ke repo public.
-
-const TMDB_API_KEY = "ISI_TMDB_API_KEY";
-const MIRROR_PASSWORD = "ISI_MIRROR_PASSWORD";
+const TMDB_API_KEY = "68e094699525b18a70bab2f86b1fa706";
+const MIRROR_PASSWORD = "3&!Z0M,VIZ;dZW==";
 
 const BASE_URL = "https://kuronime.sbs";
 const SOURCES_API = "https://animeku.org/api/v9/sources";
