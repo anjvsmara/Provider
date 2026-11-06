@@ -876,31 +876,40 @@ function pickMapRow(rows, season, episode) {
     return { row: best, realEp: episode - (best.episode_offset || 0) };
 }
 
-async function anilistTitlesById(id) {
+// Judul romaji + Inggris saja. Sinonim sengaja tidak dipakai, karena sinonim generik
+// (mis. "Bleach" untuk Final Part) membuat provider memilih halaman serial yang salah.
+async function anilistInfoById(id) {
     try {
         const res = await fetch("https://graphql.anilist.co", {
             method: "POST",
             headers: { "Content-Type": "application/json", "Accept": "application/json", "User-Agent": USER_AGENT },
             body: JSON.stringify({
-                query: "query ($id: Int) { Media(id: $id, type: ANIME) { title { romaji english } synonyms } }",
+                query: "query ($id: Int) { Media(id: $id, type: ANIME) { episodes title { romaji english } } }",
                 variables: { id: Number(id) }
             })
         });
-        if (res.status >= 400) return [];
+        if (res.status >= 400) return { titles: [], episodes: null };
         const data = JSON.parse(await res.text());
         const m = data && data.data && data.data.Media;
-        if (!m) return [];
+        if (!m) return { titles: [], episodes: null };
         const t = m.title || {};
-        const out = [];
-        for (const v of [t.romaji, t.english].concat(m.synonyms || [])) {
-            if (!v || out.indexOf(v) >= 0) continue;
+        const titles = [];
+        for (const v of [t.romaji, t.english]) {
+            if (!v || titles.indexOf(v) >= 0) continue;
             if (/[\u3040-\u30ff\u4e00-\u9fff]/.test(v)) continue;
-            out.push(v);
+            titles.push(v);
         }
-        return out;
+        return { titles: titles, episodes: m.episodes || null };
     } catch (e) {
-        return [];
+        return { titles: [], episodes: null };
     }
+}
+
+// Halaman Kuronime yang jumlah episodenya jauh di atas jumlah episode AniList
+// hampir pasti halaman serial induk, bukan bagian yang dimaksud.
+function looksLikeWrongPage(episodeCount, anilistEpisodes) {
+    if (!anilistEpisodes || !episodeCount) return false;
+    return episodeCount > anilistEpisodes * 1.5 + 2;
 }
 
 // Jalur utama: TMDB -> map -> AniList -> romaji -> link Kuronime -> episode.
@@ -911,14 +920,15 @@ async function resolveViaMap(tmdbId, season, episode) {
     if (!hit) return null;
     if (hit.realEp < 1) return { nomap: true };
 
-    const titles = await anilistTitlesById(hit.row.anilist_id);
+    const info = await anilistInfoById(hit.row.anilist_id);
+    const titles = info.titles;
     const links = await loadLinksData();
     if (!titles.length || !links.length) return { anilistId: hit.row.anilist_id, nomatch: true };
 
     const items = links.map(l => ({ title: l.title, url: l.url }));
     const match = findBestMatch(items, titles, "any", "tv");
     if (!match) return { anilistId: hit.row.anilist_id, nomatch: true, titles: titles };
-    return { url: match.url, realEp: hit.realEp, anilistId: hit.row.anilist_id };
+    return { url: match.url, realEp: hit.realEp, anilistId: hit.row.anilist_id, expectedEps: info.episodes };
 }
 
 /* ============================ AniList (romaji) ========================== */
@@ -985,6 +995,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             }
             if (mapped) {
                 const eps = await getEpisodes(mapped.url);
+                if (looksLikeWrongPage(eps.length, mapped.expectedEps)) {
+                    return [debugStream("NOMATCH wrong page eps=" + eps.length + " anilist_eps=" + mapped.expectedEps + " url=" + mapped.url)];
+                }
                 const target = eps.find(e => e.episodeNum === mapped.realEp);
                 if (!target) {
                     return [debugStream("NOEP map ep=" + mapped.realEp + " eps=" + eps.length + " url=" + mapped.url)];
