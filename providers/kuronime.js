@@ -655,7 +655,7 @@ function findBestMatch(results, titles, season, mediaType) {
         // Untuk serial TV, buang entri film (mis. "Black Clover Movie: ...")
         .filter(i => !(mediaType === 'tv' && /\bmovie\b/i.test(i.title)));
 
-    // Entri dengan nomor season yang diminta. Kalau tidak ada (mis. Bleach S17 yang
+    // Entri dengan nomor season yang diminta. Kalau tidak ada (mis. season yang
     // di Kuronime berupa judul bagian tanpa "Season N"), pakai entri tanpa suffix season.
     let items = anySeason ? all : all.filter(i => i.season === want);
     if (!anySeason && items.length === 0 && want > 1) {
@@ -811,24 +811,58 @@ async function extractStreamsFromEpisode(episodeUrl) {
     return dedupeStreams(streams);
 }
 
-/* ========================== Pemetaan episode khusus ===================== */
+/* ============================ AI fallback (opsional) ==================== */
 
-// Untuk season TMDB yang menggabungkan beberapa bagian di Kuronime.
-// key "tmdbId:season" -> daftar rentang. episode Kuronime = episode TMDB - offset.
-// Bleach TYBW: S17E41-50 = Final Part (Kuronime episode 1-10).
-// Dicek dari judul: S17E49 "The Blade" = Final ep 9, S17E50 "The Death and the Strawberry" = Final ep 10.
-// S17E40 = episode tambahan Part 3 (belum dipetakan), S17E1-39 juga NOMAP.
-const EPISODE_RULES = {
-    "30984:17": [
-        { from: 41, to: 50, offset: 40, search: "Sennen Kessen-hen Final Part" }
-    ]
-};
+// Proxy milik kamu yang menyimpan kunci AI. JANGAN taruh kunci AI di file ini.
+// Kosong = fitur nonaktif, provider hanya memakai resolver biasa.
+const AI_FALLBACK_URL = "";
+const AI_TIMEOUT_MS = 12000;
+const AI_MAX_CANDIDATES = 30;
 
-function findEpisodeRule(tmdbId, season, episode) {
-    const rules = EPISODE_RULES[String(tmdbId) + ":" + season];
-    if (!rules) return null;
-    const rule = rules.find(r => episode >= r.from && episode <= r.to);
-    return rule ? { rule: rule, realEp: episode - rule.offset } : { nomap: true };
+// Kandidat dari daftar Kuronime yang paling mirip dengan judul yang dicari.
+function topCandidates(linkItems, titles, limit) {
+    const scored = linkItems.map(item => {
+        const keyTok = new Set(latinTokens(item.title));
+        let best = 0;
+        for (const t of titles) {
+            const tTok = [...new Set(latinTokens(t))];
+            if (!tTok.length) continue;
+            const shared = tTok.filter(w => keyTok.has(w)).length;
+            best = Math.max(best, shared / tTok.length);
+        }
+        return { item: item, score: best };
+    });
+    return scored.filter(x => x.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+        .map(x => ({ slug: x.item.url.split('/anime/')[1].replace(/\/$/, ''), title: x.item.title, url: x.item.url }));
+}
+
+// AI hanya boleh memilih dari kandidat yang kita kirim. Slug di luar daftar = ditolak.
+async function askAiResolver(payload, linkItems) {
+    if (!AI_FALLBACK_URL) return null;
+    const candidates = topCandidates(linkItems, payload.titles, AI_MAX_CANDIDATES);
+    if (!candidates.length) return null;
+    try {
+        const res = await withTimeout(fetch(AI_FALLBACK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "User-Agent": USER_AGENT },
+            body: JSON.stringify({
+                tmdbId: payload.tmdbId,
+                season: payload.season,
+                episode: payload.episode,
+                titles: payload.titles,
+                candidates: candidates.map(c => ({ slug: c.slug, title: c.title }))
+            })
+        }), AI_TIMEOUT_MS);
+        if (!res || res.status >= 400) return null;
+        const data = JSON.parse(await res.text());
+        const picked = candidates.find(c => c.slug === data.slug);
+        if (!picked) return null;
+        return { url: picked.url, title: picked.title, reason: String(data.reason || "").slice(0, 200) };
+    } catch (e) {
+        return null;
+    }
 }
 
 /* ============================ Data map (umum) ========================== */
@@ -877,7 +911,7 @@ function pickMapRow(rows, season, episode) {
 }
 
 // Judul romaji + Inggris saja. Sinonim sengaja tidak dipakai, karena sinonim generik
-// (mis. "Bleach" untuk Final Part) membuat provider memilih halaman serial yang salah.
+// membuat provider memilih halaman serial yang salah.
 async function anilistInfoById(id) {
     try {
         const res = await fetch("https://graphql.anilist.co", {
@@ -991,6 +1025,19 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 return [debugStream("NOMAP tmdb=" + resolved.id + " S" + season + "E" + episode)];
             }
             if (mapped && mapped.nomatch) {
+                const links = await loadLinksData();
+                const ai = await askAiResolver({
+                    tmdbId: resolved.id, season: Number(season) || 1, episode: Number(episode),
+                    titles: mapped.titles || [String(resolved.id)]
+                }, links);
+                if (ai) {
+                    const aiEps = await getEpisodes(ai.url);
+                    const aiTarget = aiEps.find(e => e.episodeNum === Number(episode));
+                    if (aiTarget) {
+                        const aiStreams = await extractStreamsFromEpisode(aiTarget.url);
+                        if (aiStreams.length) return aiStreams;
+                    }
+                }
                 return [debugStream("NOMATCH map anilist=" + mapped.anilistId + " al=" + ((mapped.titles || []).join(" | ")))];
             }
             if (mapped) {
