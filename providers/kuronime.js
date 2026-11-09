@@ -7,7 +7,7 @@ const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 let lastEmbedHosts = [];
 
 // Host yang sudah pasti tidak menghasilkan video di JS (DNS mati atau butuh WebView)
-const SKIP_HOSTS = ['dsvplay.com', 'vidhidevip.com', 'callistanise.com', 'vidhidepro', 'vidhide'];
+const SKIP_HOSTS = ['dsvplay.com', 'vidhidevip.com', 'callistanise.com', 'vidhidepro', 'vidhide', 'krakenfiles.com'];
 const HOST_TIMEOUT_MS = 8000;
 
 function isSkippedHost(url) {
@@ -562,7 +562,8 @@ async function getAnimeTitle(tmdbId, mediaType) {
     if (!title) throw new Error('TMDB response tidak punya judul');
     return {
         title: title,
-        originalTitle: data.original_name || data.original_title || ""
+        originalTitle: data.original_name || data.original_title || "",
+        seasons: (data.seasons || []).reduce((acc, se) => { acc[se.season_number] = se.episode_count; return acc; }, {})
     };
 }
 
@@ -907,6 +908,13 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         }
 
         const episodes = await getEpisodes(match.url);
+
+        // Universal: kalau halaman Kuronime punya jauh lebih banyak episode daripada season
+        // yang diminta di TMDB, itu hampir pasti halaman serial induk, bukan season ini.
+        const seasonEps = info.seasons ? info.seasons[seasonNum] : null;
+        if (mediaType === 'tv' && seasonEps && episodes.length > seasonEps * 1.5 + 2) {
+            return [debugStream("NOMATCH wrong page eps=" + episodes.length + " tmdb_season_eps=" + seasonEps + " url=" + match.url)];
+        }
 
         if (mediaType === 'movie') {
             const episodeUrl = episodes.length > 0 ? episodes[0].url : match.url;
