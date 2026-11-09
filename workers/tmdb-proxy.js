@@ -53,9 +53,9 @@ export default {
         const [kind, identifier] = parts;
         let tmdbPath;
 
-        if (kind === "find" && /^tt\\d+$/.test(identifier)) {
+        if (kind === "find" && /^tt\d+$/.test(identifier)) {
             tmdbPath = `/3/find/${encodeURIComponent(identifier)}`;
-        } else if ((kind === "tv" || kind === "movie") && /^\\d+$/.test(identifier)) {
+        } else if ((kind === "tv" || kind === "movie") && /^\d+$/.test(identifier)) {
             tmdbPath = `/3/${kind}/${encodeURIComponent(identifier)}`;
         } else {
             return jsonResponse({ error: "Invalid metadata route" }, 400);
