@@ -6,16 +6,21 @@ const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 
 let lastEmbedHosts = [];
 
-// Host yang sudah pasti tidak menghasilkan video di JS (DNS mati atau butuh WebView)
 const SKIP_HOSTS = ['dsvplay.com', 'vidhidevip.com', 'callistanise.com', 'vidhidepro', 'vidhide', 'krakenfiles.com'];
 const HOST_TIMEOUT_MS = 8000;
+
+const ALLOWED_HOSTS = ['pixeldrain.com', 'mp4upload.com'];
+
+function isAllowedHost(url) {
+    const u = (url || '').toLowerCase();
+    return ALLOWED_HOSTS.some(h => u.indexOf(h) >= 0) || isDirectMedia(url);
+}
 
 function isSkippedHost(url) {
     const u = (url || '').toLowerCase();
     return SKIP_HOSTS.some(h => u.indexOf(h) >= 0);
 }
 
-// Batas waktu per host. Kalau setTimeout tidak tersedia, dijalankan tanpa batas.
 function withTimeout(promise, ms) {
     if (typeof setTimeout !== 'function') return promise;
     return Promise.race([
@@ -25,8 +30,6 @@ function withTimeout(promise, ms) {
 }
 
 const MEDIA_REGEX_SRC = "https?:\\/\\/[^\"'\\s<]+?(?:\\.m3u8|\\.mp4)(?!\\w)|https?:\\/\\/[^\"'\\s<]+?(?:googlevideo|blogger|blogspot|bloggerusercontent|pixeldrain)[^\"'\\s<]*";
-
-/* ============================ Utilitas umum ============================ */
 
 function flatten(arrays) {
     return arrays.reduce((acc, arr) => acc.concat(arr), []);
@@ -46,14 +49,12 @@ function stripTags(s) {
     return decodeEntities(s.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
 }
 
-// Ambil nilai atribut dari string tag, mis. getAttr('<a href="x">', 'href')
 function getAttr(tag, name) {
     const re = new RegExp('(?:^|\\s)' + name + '\\s*=\\s*["\']([^"\']*)["\']', 'i');
     const m = tag.match(re);
     return m ? decodeEntities(m[1]) : null;
 }
 
-// Rapikan label resolusi: "v1080p" -> "1080p", "720P" -> "720p", selain itu -> "Auto".
 function normalizeQuality(q) {
     const m = String(q || "").match(/(\d{3,4})\s*p/i);
     return m ? m[1] + "p" : "Auto";
@@ -73,8 +74,6 @@ async function fetchText(url, options) {
     if (res.status >= 400) throw new Error(`HTTP ${res.status} for ${url}`);
     return res.text();
 }
-
-/* ============================ Encoding helpers ========================= */
 
 const B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
@@ -151,8 +150,6 @@ function utf8Encode(str) {
     return out;
 }
 
-/* ================================== MD5 ================================ */
-
 const MD5_K = [];
 for (let i = 0; i < 64; i++) MD5_K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296) >>> 0;
 
@@ -207,7 +204,6 @@ function md5(bytes) {
     return out;
 }
 
-// OpenSSL EVP_BytesToKey dengan MD5 (sama seperti kode CryptoJS sebelumnya)
 function evpBytesToKey(password, salt, keyLen) {
     let key = [];
     let prev = [];
@@ -217,8 +213,6 @@ function evpBytesToKey(password, salt, keyLen) {
     }
     return key.slice(0, keyLen);
 }
-
-/* ================================== AES ================================ */
 
 function gmul(a, b) {
     let p = 0;
@@ -263,7 +257,6 @@ function aesSubWord(t) {
             AES_SBOX[t & 0xff]) >>> 0;
 }
 
-// Key expansion AES-256 (Nk = 8, Nr = 14)
 function aesExpandKey(key) {
     const w = [];
     for (let i = 0; i < 8; i++) {
@@ -329,7 +322,6 @@ function aesDecryptBlock(input, w) {
     return s;
 }
 
-// AES-256-CBC decrypt dengan padding PKCS7
 function aes256CbcDecrypt(key, iv, data) {
     const w = aesExpandKey(key);
     const out = [];
@@ -344,8 +336,6 @@ function aes256CbcDecrypt(key, iv, data) {
     if (!(pad >= 1 && pad <= 16)) throw new Error('bad PKCS7 padding');
     return out.slice(0, out.length - pad);
 }
-
-/* ============================ Mirror payload ============================ */
 
 async function tmdbGet(path) {
     const body = await fetchText(WORKER_URL + "/tmdb?path=" + encodeURIComponent(path));
@@ -370,13 +360,10 @@ async function decodeMirrorPayload(encoded) {
     }
 }
 
-/* ================================ Unpacker ============================== */
-
 function unescapeJs(s) {
     return s.replace(/\\(['"\\])/g, '$1');
 }
 
-// Unpacker P.A.C.K.E.R. tanpa eval / new Function
 function unpack(html) {
     const re = /\}\s*\(\s*(['"])((?:\\.|(?!\1)[^\\])*)\1\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(['"])((?:\\.|(?!\5)[^\\])*)\5\.split\('\|'\)/;
     const m = html.match(re);
@@ -406,8 +393,6 @@ function unpack(html) {
     }
 }
 
-/* ============================= URL / stream ============================= */
-
 function isDirectMedia(url) {
     const cleanUrl = url.split('?')[0].toLowerCase();
 
@@ -425,7 +410,6 @@ function isDirectMedia(url) {
            cleanUrl.indexOf("pixeldrain.com/api/file/") >= 0;
 }
 
-// Nama sumber yang tampil di Nuvio, sesuai host asalnya
 function hostLabel(url) {
     const u = (url || '').toLowerCase();
     if (u.indexOf('pixeldrain.com') >= 0) return "Pixeldrain";
@@ -447,8 +431,6 @@ function pixeldrainStream(url, quality) {
     };
 }
 
-// Mengubah URL menjadi stream bila sudah langsung bisa diputar.
-// Mengembalikan null bila URL masih berupa halaman player yang perlu di-inspect.
 function streamFromUrl(url, referer, quality) {
     const q = normalizeQuality(quality || getQualityFromUrl(url));
     if (url.indexOf('pixeldrain.com') >= 0) return pixeldrainStream(url, q);
@@ -474,16 +456,21 @@ function debugStream(msg) {
     };
 }
 
+const LOW_QUALITIES = ['240p', '360p', '480p'];
+const PREFERRED_QUALITIES = ['720p', '1080p'];
+
 function dedupeStreams(streams) {
     const seen = new Set();
-    return streams.filter(s => {
+    const unique = streams.filter(s => {
         if (seen.has(s.url)) return false;
         seen.add(s.url);
         return true;
     });
+    const hasPreferred = unique.some(s => PREFERRED_QUALITIES.indexOf(s.quality) >= 0);
+    if (!hasPreferred) return unique;
+    return unique.filter(s => LOW_QUALITIES.indexOf(s.quality) < 0);
 }
 
-// Mengumpulkan kandidat URL dari HTML (iframe/video/source + regex media)
 function collectUrlsFromHtml(html) {
     const found = [];
     const tagRe = /<(iframe|video|source)\b[^>]*>/gi;
@@ -497,8 +484,6 @@ function collectUrlsFromHtml(html) {
     return found;
 }
 
-// Resolver khusus mp4upload: halamannya memakai script terkemas (packed),
-// dan URL video ada di player.src("...") setelah di-unpack.
 async function resolveMp4Upload(playerUrl, referer, quality) {
     try {
         const html = await fetchText(playerUrl, { headers: { "Referer": referer } });
@@ -545,9 +530,6 @@ async function inspectPlayerPage(playerUrl, referer, quality) {
     }
 }
 
-/* ============================ TMDB & pencarian ========================== */
-
-// Menerima TMDB ID numerik atau IMDb ID (tt...) dan mengembalikan TMDB ID + tipe
 async function resolveTmdb(id, mediaType) {
     const s = String(id).trim();
     if (!/^tt\d+$/.test(s)) return { id: s, type: mediaType };
@@ -584,7 +566,6 @@ function anchorsIn(html) {
     return out;
 }
 
-// Ambil judul + URL anime dari sebuah blok HTML hasil pencarian
 function pickAnime(block) {
     for (const a of anchorsIn(block)) {
         const href = getAttr(a.tag, 'href');
@@ -608,7 +589,6 @@ async function searchKuronime(query) {
 
     const results = [];
 
-    // article.bs (termasuk di dalam div.listupd)
     const articleRe = /<article\b[^>]*class="[^"]*\bbs\b[^"]*"[^>]*>([\s\S]*?)<\/article>/gi;
     let m;
     while ((m = articleRe.exec(html)) !== null) {
@@ -616,7 +596,6 @@ async function searchKuronime(query) {
         if (item) results.push(item);
     }
 
-    // a.series di dalam .imgseries
     for (const a of anchorsIn(html)) {
         if (!/\bseries\b/.test(getAttr(a.tag, 'class') || '')) continue;
         const href = getAttr(a.tag, 'href');
@@ -633,16 +612,13 @@ async function searchKuronime(query) {
     });
 }
 
-// Normalisasi: buang spasi dan tanda baca ASCII/CJK, huruf non-Latin tetap dipertahankan
 const normalizeTitle = (s) =>
     (s || '').toLowerCase().replace(/[\s!-\/:-@\[-`{-~\u3000-\u303f\uff01-\uff0f]+/g, '');
 
-// Token kata (huruf/angka Latin) untuk pencocokan berbasis kata.
 function latinTokens(s) {
     return (s || '').toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 0);
 }
 
-// Nomor season dari judul Kuronime, mis. "Black Clover Season 2" -> 2. null bila tidak ada suffix.
 function seasonOf(title) {
     const t = (title || '').toLowerCase();
     let m = t.match(/season\s*(\d+)/);
@@ -652,8 +628,6 @@ function seasonOf(title) {
     return null;
 }
 
-// Pencocokan kecocokan dengan urutan: exact -> substring -> kesamaan kata.
-// Hanya entri dengan season yang diminta yang dipertimbangkan.
 function findBestMatch(results, titles, season, mediaType) {
     const anySeason = season === 'any';
     const want = anySeason ? null : (Number(season) > 1 ? Number(season) : 1);
@@ -668,11 +642,9 @@ function findBestMatch(results, titles, season, mediaType) {
             season: seasonOf(r.title) || 1
         }))
         .filter(i => i.key)
-        // Untuk serial TV, buang entri film (mis. "Black Clover Movie: ...")
+
         .filter(i => !(mediaType === 'tv' && /\bmovie\b/i.test(i.title)));
 
-    // Entri dengan nomor season yang diminta. Kalau tidak ada (mis. season yang
-    // di Kuronime berupa judul bagian tanpa "Season N"), pakai entri tanpa suffix season.
     let items = anySeason ? all : all.filter(i => i.season === want);
     if (!anySeason && items.length === 0 && want > 1) {
         items = all.filter(i => i.rawSeason === null);
@@ -681,14 +653,11 @@ function findBestMatch(results, titles, season, mediaType) {
     const targets = titles.map(normalizeTitle).filter(Boolean);
     if (items.length === 0 || targets.length === 0) return null;
 
-    // 1. Exact match
     for (const t of targets) {
         const hit = items.find(i => i.key === t);
         if (hit) return hit;
     }
 
-    // 2. Substring match, hanya bila kedua string cukup panjang.
-    //    Bila ada beberapa kecocokan, pilih judul yang paling pendek (paling mirip).
     for (const t of targets) {
         if (t.length < 4) continue;
         const hits = items.filter(i => i.key.length >= 4 && (i.key.indexOf(t) >= 0 || t.indexOf(i.key) >= 0));
@@ -697,7 +666,6 @@ function findBestMatch(results, titles, season, mediaType) {
         }
     }
 
-    // 3. Kesamaan kata: minimal 2 kata target, dan >= 60% kata target ada di judul Kuronime
     let best = null;
     for (const title of titles) {
         const tTok = [...new Set(latinTokens(title))];
@@ -707,7 +675,7 @@ function findBestMatch(results, titles, season, mediaType) {
             const shared = tTok.filter(w => itemSet.has(w)).length;
             const ratio = shared / tTok.length;
             if (shared < 2 || ratio < 0.6) continue;
-            // prioritas: rasio tertinggi, lalu judul Kuronime yang paling pendek (paling mirip)
+
             if (!best || ratio > best.ratio || (ratio === best.ratio && item.tok.length < best.item.tok.length)) {
                 best = { item, ratio };
             }
@@ -719,7 +687,6 @@ function findBestMatch(results, titles, season, mediaType) {
 async function getEpisodes(animeUrl) {
     const html = await fetchText(animeUrl, { headers: { "Referer": BASE_URL } });
 
-    // Batasi pencarian ke bagian daftar episode (class bixbox bxcl)
     const start = html.search(/class="[^"]*bixbox[^"]*bxcl/);
     const scope = start >= 0 ? html.slice(start) : html;
 
@@ -742,8 +709,6 @@ async function getEpisodes(animeUrl) {
     }
     return episodes;
 }
-
-/* ============================ Ekstraksi stream ========================== */
 
 function collectEmbedUrls(mirror) {
     const items = [];
@@ -805,7 +770,7 @@ async function extractStreamsFromEpisode(episodeUrl) {
     const mirror = sources.mirror ? await decodeMirrorPayload(sources.mirror) : null;
     const embedItems = collectEmbedUrls(mirror);
     lastEmbedHosts = embedItems.map(i => ((i.url.match(/^https?:\/\/([^\/]+)/) || [])[1] || "?"));
-    const usableItems = embedItems.filter(i => !isSkippedHost(i.url));
+    const usableItems = embedItems.filter(i => !isSkippedHost(i.url) && isAllowedHost(i.url));
 
     if (usableItems.length === 0) {
         return dedupeStreams(await inspectPageFallback(html, episodeUrl, new Set()));
@@ -827,12 +792,8 @@ async function extractStreamsFromEpisode(episodeUrl) {
     return dedupeStreams(streams);
 }
 
-/* ============================ AniList (romaji) ========================== */
-
 const ANILIST_QUERY = "query ($search: String) { Media(search: $search, type: ANIME) { title { romaji english } synonyms } }";
 
-// Mengambil judul romaji/Inggris/sinonim dari AniList untuk satu judul.
-// Hanya judul Latin yang dikembalikan (tanpa kanji/kana).
 async function getAniListTitles(title) {
     try {
         const res = await fetch("https://graphql.anilist.co", {
@@ -863,8 +824,6 @@ async function getAniListTitles(title) {
     }
 }
 
-/* ================================ Entry point =========================== */
-
 async function getStreams(tmdbId, mediaType, season, episode) {
     mediaType = (mediaType === 'series' || mediaType === 'tv') ? 'tv' : 'movie';
     if (season === -1) season = null;
@@ -882,22 +841,18 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
         const seasonNum = Number(season) || 1;
 
-        // Tahap 1: cari dengan judul TMDB (Inggris) dan judul asli
         let results = await searchKuronime(info.title);
         if (results.length === 0 && info.originalTitle) {
             results = await searchKuronime(info.originalTitle);
         }
         let match = findBestMatch(results, [info.title, info.originalTitle], seasonNum, mediaType);
 
-        // Tahap 2: ambil romaji dari AniList, lalu cari lagi di Kuronime
         let aliases = [];
         if (!match) {
             aliases = await getAniListTitles(info.title);
 
-            // Cocokkan romaji ke hasil pencarian yang sudah ada dulu (tanpa request baru)
             match = findBestMatch(results, aliases, seasonNum, mediaType);
 
-            // Kalau belum, cari ulang di Kuronime pakai tiap romaji
             for (const alias of aliases) {
                 if (match) break;
                 const aliasResults = await searchKuronime(alias);
@@ -916,12 +871,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
         const episodes = await getEpisodes(match.url);
 
-        // Universal: kalau halaman Kuronime punya jauh lebih banyak episode daripada season
-        // yang diminta di TMDB, itu hampir pasti halaman serial induk, bukan season ini.
         const seasonEps = info.seasons ? info.seasons[seasonNum] : null;
         if (mediaType === 'tv' && seasonEps && episodes.length > seasonEps * 1.5 + 2) {
-            // Halaman dengan penomoran absolut (mis. One Piece): nomor episode = jumlah episode
-            // season sebelumnya + episode. Hanya dipakai kalau halaman benar-benar mencakup season ini.
+
             const prevSum = Object.keys(info.seasons)
                 .filter(k => Number(k) > 0 && Number(k) < seasonNum)
                 .reduce((a, k) => a + info.seasons[k], 0);
@@ -945,11 +897,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             return movieStreams.length ? movieStreams : [debugStream("NOSTREAM hosts=" + lastEmbedHosts.join(",") + " url=" + episodeUrl)];
         }
 
-        // Series: pemetaan episode per-season belum terbukti untuk season > 1
         const numbered = episodes.filter(e => e.episodeNum !== null);
         let target = numbered.find(e => e.episodeNum === episode);
 
-        // Fallback berdasarkan urutan hanya bila tidak ada episode yang bernomor
         if (!target && numbered.length === 0 && episode && episodes.length >= episode) {
             target = episodes[episode - 1];
         }
