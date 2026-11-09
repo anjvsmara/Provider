@@ -913,6 +913,22 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         // yang diminta di TMDB, itu hampir pasti halaman serial induk, bukan season ini.
         const seasonEps = info.seasons ? info.seasons[seasonNum] : null;
         if (mediaType === 'tv' && seasonEps && episodes.length > seasonEps * 1.5 + 2) {
+            // Halaman dengan penomoran absolut (mis. One Piece): nomor episode = jumlah episode
+            // season sebelumnya + episode. Hanya dipakai kalau halaman benar-benar mencakup season ini.
+            const prevSum = Object.keys(info.seasons)
+                .filter(k => Number(k) > 0 && Number(k) < seasonNum)
+                .reduce((a, k) => a + info.seasons[k], 0);
+            if (prevSum > 0 && episodes.length >= prevSum + seasonEps) {
+                const absEp = prevSum + Number(episode);
+                const absTarget = episodes.find(e => e.episodeNum === absEp);
+                if (!absTarget) {
+                    return [debugStream("NOEP absolute ep=" + absEp + " eps=" + episodes.length)];
+                }
+                const absStreams = await extractStreamsFromEpisode(absTarget.url);
+                return absStreams.length
+                    ? absStreams
+                    : [debugStream("NOSTREAM hosts=" + lastEmbedHosts.join(",") + " ep=" + absTarget.url)];
+            }
             return [debugStream("NOMATCH wrong page eps=" + episodes.length + " tmdb_season_eps=" + seasonEps + " url=" + match.url)];
         }
 
