@@ -53,6 +53,12 @@ function getAttr(tag, name) {
     return m ? decodeEntities(m[1]) : null;
 }
 
+// Rapikan label resolusi: "v1080p" -> "1080p", "720P" -> "720p", selain itu -> "Auto".
+function normalizeQuality(q) {
+    const m = String(q || "").match(/(\d{3,4})\s*p/i);
+    return m ? m[1] + "p" : "Auto";
+}
+
 function getQualityFromUrl(url) {
     const match = url.match(/\b(2160|1440|1080|720|480|360|240)\b/);
     return match ? match[1] + "p" : "Auto";
@@ -444,7 +450,7 @@ function pixeldrainStream(url, quality) {
 // Mengubah URL menjadi stream bila sudah langsung bisa diputar.
 // Mengembalikan null bila URL masih berupa halaman player yang perlu di-inspect.
 function streamFromUrl(url, referer, quality) {
-    const q = quality || getQualityFromUrl(url);
+    const q = normalizeQuality(quality || getQualityFromUrl(url));
     if (url.indexOf('pixeldrain.com') >= 0) return pixeldrainStream(url, q);
     if (isDirectMedia(url)) {
         const label = hostLabel(url);
@@ -493,7 +499,7 @@ function collectUrlsFromHtml(html) {
 
 // Resolver khusus mp4upload: halamannya memakai script terkemas (packed),
 // dan URL video ada di player.src("...") setelah di-unpack.
-async function resolveMp4Upload(playerUrl, referer) {
+async function resolveMp4Upload(playerUrl, referer, quality) {
     try {
         const html = await fetchText(playerUrl, { headers: { "Referer": referer } });
         const unpacked = unpack(html);
@@ -503,11 +509,12 @@ async function resolveMp4Upload(playerUrl, referer) {
         if (!m) return null;
         const videoUrl = m[1];
         if (videoUrl.indexOf('http') !== 0) return null;
+        const q = normalizeQuality(quality || getQualityFromUrl(videoUrl));
         return {
             name: "Mp4Upload",
-            title: "Kuronime - Mp4Upload",
+            title: "Kuronime - Mp4Upload (" + q + ")",
             url: videoUrl,
-            quality: getQualityFromUrl(videoUrl),
+            quality: q,
             headers: { "Referer": "https://www.mp4upload.com/", "User-Agent": USER_AGENT }
         };
     } catch (err) {
@@ -515,12 +522,12 @@ async function resolveMp4Upload(playerUrl, referer) {
     }
 }
 
-async function inspectPlayerPage(playerUrl, referer) {
-    const direct = streamFromUrl(playerUrl, referer);
+async function inspectPlayerPage(playerUrl, referer, quality) {
+    const direct = streamFromUrl(playerUrl, referer, quality);
     if (direct) return [direct];
 
     if (playerUrl.indexOf('mp4upload.com') >= 0) {
-        const mp4 = await resolveMp4Upload(playerUrl, referer);
+        const mp4 = await resolveMp4Upload(playerUrl, referer, quality);
         if (mp4) return [mp4];
     }
 
@@ -529,7 +536,7 @@ async function inspectPlayerPage(playerUrl, referer) {
         const clean = unpack(html).replace(/\\\//g, '/');
         const streams = [];
         for (const url of collectUrlsFromHtml(clean)) {
-            const s = streamFromUrl(url, playerUrl);
+            const s = streamFromUrl(url, playerUrl, quality);
             if (s) streams.push(s);
         }
         return streams;
@@ -808,7 +815,7 @@ async function extractStreamsFromEpisode(episodeUrl) {
         const direct = streamFromUrl(item.url, episodeUrl, item.quality);
         return direct
             ? Promise.resolve([direct])
-            : withTimeout(inspectPlayerPage(item.url, episodeUrl), HOST_TIMEOUT_MS);
+            : withTimeout(inspectPlayerPage(item.url, episodeUrl, item.quality), HOST_TIMEOUT_MS);
     }));
     let streams = flatten(results);
 
