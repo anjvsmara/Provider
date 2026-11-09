@@ -1,4 +1,4 @@
-const TMDB_API_KEY = "68e094699525b18a70bab2f86b1fa706";
+const TMDB_PROXY_URL = "https://YOUR-WORKER.workers.dev";
 const MIRROR_PASSWORD = "3&!Z0M,VIZ;dZW==";
 
 const BASE_URL = "https://kuronime.sbs";
@@ -530,12 +530,12 @@ async function inspectPlayerPage(playerUrl, referer) {
 
 /* ============================ TMDB & pencarian ========================== */
 
-// Menerima TMDB ID numerik atau IMDb ID (tt...) dan mengembalikan TMDB ID + tipe
+// Metadata TMDB diambil melalui Cloudflare Worker agar API key tidak tertanam di provider.
 async function resolveTmdb(id, mediaType) {
-    const s = String(id).trim();
-    if (!/^tt\d+$/.test(s)) return { id: s, type: mediaType };
+    const value = String(id).trim();
+    if (!/^tt\d+$/.test(value)) return { id: value, type: mediaType };
 
-    const body = await fetchText(`https://api.themoviedb.org/3/find/${s}?api_key=${TMDB_API_KEY}&external_source=imdb_id`);
+    const body = await fetchText(`${TMDB_PROXY_URL}/find/${encodeURIComponent(value)}?external_source=imdb_id`);
     const data = JSON.parse(body);
     const movies = data.movie_results || [];
     const shows = data.tv_results || [];
@@ -543,12 +543,12 @@ async function resolveTmdb(id, mediaType) {
     if (mediaType === 'movie' && movies.length) return { id: movies[0].id, type: 'movie' };
     if (shows.length) return { id: shows[0].id, type: 'tv' };
     if (movies.length) return { id: movies[0].id, type: 'movie' };
-    throw new Error('IMDb ID tidak ditemukan di TMDB: ' + s);
+    throw new Error('IMDb ID tidak ditemukan di TMDB: ' + value);
 }
 
 async function getAnimeTitle(tmdbId, mediaType) {
     const endpoint = mediaType === 'tv' ? 'tv' : 'movie';
-    const body = await fetchText(`https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}`);
+    const body = await fetchText(`${TMDB_PROXY_URL}/${endpoint}/${encodeURIComponent(tmdbId)}`);
     const data = JSON.parse(body);
     const title = mediaType === 'tv' ? data.name : data.title;
     if (!title) throw new Error('TMDB response tidak punya judul');
@@ -811,160 +811,6 @@ async function extractStreamsFromEpisode(episodeUrl) {
     return dedupeStreams(streams);
 }
 
-/* ============================ AI fallback (opsional) ==================== */
-
-// Proxy milik kamu yang menyimpan kunci AI. JANGAN taruh kunci AI di file ini.
-// Kosong = fitur nonaktif, provider hanya memakai resolver biasa.
-const AI_FALLBACK_URL = "";
-const AI_TIMEOUT_MS = 12000;
-const AI_MAX_CANDIDATES = 30;
-
-// Kandidat dari daftar Kuronime yang paling mirip dengan judul yang dicari.
-function topCandidates(linkItems, titles, limit) {
-    const scored = linkItems.map(item => {
-        const keyTok = new Set(latinTokens(item.title));
-        let best = 0;
-        for (const t of titles) {
-            const tTok = [...new Set(latinTokens(t))];
-            if (!tTok.length) continue;
-            const shared = tTok.filter(w => keyTok.has(w)).length;
-            best = Math.max(best, shared / tTok.length);
-        }
-        return { item: item, score: best };
-    });
-    return scored.filter(x => x.score > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, limit)
-        .map(x => ({ slug: x.item.url.split('/anime/')[1].replace(/\/$/, ''), title: x.item.title, url: x.item.url }));
-}
-
-// AI hanya boleh memilih dari kandidat yang kita kirim. Slug di luar daftar = ditolak.
-async function askAiResolver(payload, linkItems) {
-    if (!AI_FALLBACK_URL) return null;
-    const candidates = topCandidates(linkItems, payload.titles, AI_MAX_CANDIDATES);
-    if (!candidates.length) return null;
-    try {
-        const res = await withTimeout(fetch(AI_FALLBACK_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "User-Agent": USER_AGENT },
-            body: JSON.stringify({
-                tmdbId: payload.tmdbId,
-                season: payload.season,
-                episode: payload.episode,
-                titles: payload.titles,
-                candidates: candidates.map(c => ({ slug: c.slug, title: c.title }))
-            })
-        }), AI_TIMEOUT_MS);
-        if (!res || res.status >= 400) return null;
-        const data = JSON.parse(await res.text());
-        const picked = candidates.find(c => c.slug === data.slug);
-        if (!picked) return null;
-        return { url: picked.url, title: picked.title, reason: String(data.reason || "").slice(0, 200) };
-    } catch (e) {
-        return null;
-    }
-}
-
-/* ============================ Data map (umum) ========================== */
-
-// File data ini harus ada di repo, folder data/. Kalau gagal diambil, provider memakai pencarian judul biasa.
-const DATA_BASE = "https://raw.githubusercontent.com/anjvsmara/provider/refs/heads/main/data/";
-const MAP_URL = DATA_BASE + "tmdb_anilist_map.json";
-const LINKS_URL = DATA_BASE + "kuronime_links.json";
-let _mapCache = null;
-let _linksCache = null;
-
-async function loadMapData() {
-    if (_mapCache) return _mapCache;
-    try { _mapCache = JSON.parse(await fetchText(MAP_URL)); } catch (e) { _mapCache = {}; }
-    return _mapCache;
-}
-
-async function loadLinksData() {
-    if (_linksCache) return _linksCache;
-    try { _linksCache = JSON.parse(await fetchText(LINKS_URL)); } catch (e) { _linksCache = []; }
-    return _linksCache;
-}
-
-// Pilih bagian yang tepat dari map untuk season + episode TMDB yang diminta.
-// Mengembalikan { row, realEp } atau null.
-function pickMapRow(rows, season, episode) {
-    if (!rows || !rows.length) return null;
-    const isNum = v => typeof v === "number";
-    let cands;
-    if (season > 1) {
-        cands = rows.filter(r => r.tmdb_season === season);
-        if (!cands.length) cands = rows.filter(r => isNum(r.tmdb_season) && r.tmdb_season > 1);
-        if (!cands.length) cands = rows.filter(r => r.tmdb_season == null);
-    } else {
-        cands = rows.filter(r => r.tmdb_season === 1 || r.tmdb_season == null);
-        if (!cands.length) cands = rows;
-    }
-    if (!cands.length) return null;
-    let best = null;
-    for (const r of cands) {
-        const off = r.episode_offset || 0;
-        if (off < episode && (best === null || off >= (best.episode_offset || 0))) best = r;
-    }
-    if (!best) best = cands[0];
-    return { row: best, realEp: episode - (best.episode_offset || 0) };
-}
-
-// Judul romaji + Inggris saja. Sinonim sengaja tidak dipakai, karena sinonim generik
-// membuat provider memilih halaman serial yang salah.
-async function anilistInfoById(id) {
-    try {
-        const res = await fetch("https://graphql.anilist.co", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Accept": "application/json", "User-Agent": USER_AGENT },
-            body: JSON.stringify({
-                query: "query ($id: Int) { Media(id: $id, type: ANIME) { episodes title { romaji english } } }",
-                variables: { id: Number(id) }
-            })
-        });
-        if (res.status >= 400) return { titles: [], episodes: null };
-        const data = JSON.parse(await res.text());
-        const m = data && data.data && data.data.Media;
-        if (!m) return { titles: [], episodes: null };
-        const t = m.title || {};
-        const titles = [];
-        for (const v of [t.romaji, t.english]) {
-            if (!v || titles.indexOf(v) >= 0) continue;
-            if (/[\u3040-\u30ff\u4e00-\u9fff]/.test(v)) continue;
-            titles.push(v);
-        }
-        return { titles: titles, episodes: m.episodes || null };
-    } catch (e) {
-        return { titles: [], episodes: null };
-    }
-}
-
-// Halaman Kuronime yang jumlah episodenya jauh di atas jumlah episode AniList
-// hampir pasti halaman serial induk, bukan bagian yang dimaksud.
-function looksLikeWrongPage(episodeCount, anilistEpisodes) {
-    if (!anilistEpisodes || !episodeCount) return false;
-    return episodeCount > anilistEpisodes * 1.5 + 2;
-}
-
-// Jalur utama: TMDB -> map -> AniList -> romaji -> link Kuronime -> episode.
-// Mengembalikan { url, realEp, anilistId } atau { nomap: true } atau null (pakai jalur biasa).
-async function resolveViaMap(tmdbId, season, episode) {
-    const map = await loadMapData();
-    const hit = pickMapRow(map[String(tmdbId)], season, episode);
-    if (!hit) return null;
-    if (hit.realEp < 1) return { nomap: true };
-
-    const info = await anilistInfoById(hit.row.anilist_id);
-    const titles = info.titles;
-    const links = await loadLinksData();
-    if (!titles.length || !links.length) return { anilistId: hit.row.anilist_id, nomatch: true };
-
-    const items = links.map(l => ({ title: l.title, url: l.url }));
-    const match = findBestMatch(items, titles, "any", "tv");
-    if (!match) return { anilistId: hit.row.anilist_id, nomatch: true, titles: titles };
-    return { url: match.url, realEp: hit.realEp, anilistId: hit.row.anilist_id, expectedEps: info.episodes };
-}
-
 /* ============================ AniList (romaji) ========================== */
 
 const ANILIST_QUERY = "query ($search: String) { Media(search: $search, type: ANIME) { title { romaji english } synonyms } }";
@@ -1008,8 +854,8 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     if (season === -1) season = null;
     if (episode === -1) episode = null;
 
-    if (!TMDB_API_KEY || TMDB_API_KEY.indexOf("ISI_") === 0) {
-        return [debugStream("CONFIG: TMDB_API_KEY belum diisi")];
+    if (!TMDB_PROXY_URL || TMDB_PROXY_URL.indexOf("YOUR-WORKER") >= 0) {
+        return [debugStream("CONFIG: TMDB_PROXY_URL belum diatur")];
     }
     if (!MIRROR_PASSWORD || MIRROR_PASSWORD.indexOf("ISI_") === 0) {
         return [debugStream("CONFIG: MIRROR_PASSWORD belum diisi")];
@@ -1019,42 +865,6 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         const resolved = await resolveTmdb(tmdbId, mediaType);
         mediaType = resolved.type;
 
-        if (mediaType === 'tv') {
-            const mapped = await resolveViaMap(resolved.id, Number(season) || 1, Number(episode));
-            if (mapped && mapped.nomap) {
-                return [debugStream("NOMAP tmdb=" + resolved.id + " S" + season + "E" + episode)];
-            }
-            if (mapped && mapped.nomatch) {
-                const links = await loadLinksData();
-                const ai = await askAiResolver({
-                    tmdbId: resolved.id, season: Number(season) || 1, episode: Number(episode),
-                    titles: mapped.titles || [String(resolved.id)]
-                }, links);
-                if (ai) {
-                    const aiEps = await getEpisodes(ai.url);
-                    const aiTarget = aiEps.find(e => e.episodeNum === Number(episode));
-                    if (aiTarget) {
-                        const aiStreams = await extractStreamsFromEpisode(aiTarget.url);
-                        if (aiStreams.length) return aiStreams;
-                    }
-                }
-                return [debugStream("NOMATCH map anilist=" + mapped.anilistId + " al=" + ((mapped.titles || []).join(" | ")))];
-            }
-            if (mapped) {
-                const eps = await getEpisodes(mapped.url);
-                if (looksLikeWrongPage(eps.length, mapped.expectedEps)) {
-                    return [debugStream("NOMATCH wrong page eps=" + eps.length + " anilist_eps=" + mapped.expectedEps + " url=" + mapped.url)];
-                }
-                const target = eps.find(e => e.episodeNum === mapped.realEp);
-                if (!target) {
-                    return [debugStream("NOEP map ep=" + mapped.realEp + " eps=" + eps.length + " url=" + mapped.url)];
-                }
-                const mappedStreams = await extractStreamsFromEpisode(target.url);
-                return mappedStreams.length
-                    ? mappedStreams
-                    : [debugStream("NOSTREAM hosts=" + lastEmbedHosts.join(",") + " ep=" + target.url)];
-            }
-        }
         const info = await getAnimeTitle(resolved.id, mediaType);
 
         const seasonNum = Number(season) || 1;
