@@ -294,7 +294,8 @@ function findMatches(results, titles, season, mediaType) {
     for (const t of targets) {
         if (t.length < 4) continue;
         for (const item of items) {
-            if (item.key.length >= 4 && (item.key.indexOf(t) >= 0 || t.indexOf(item.key) >= 0 || item.baseKey.indexOf(t) >= 0)) {
+            const coversEnough = item.key.length >= 0.6 * t.length;
+            if (item.key.length >= 4 && ((item.key.indexOf(t) >= 0 && coversEnough) || (t.indexOf(item.key) >= 0 && coversEnough) || item.baseKey.indexOf(t) >= 0)) {
                 if (!seen.has(item.url)) {
                     matches.push(item);
                     seen.add(item.url);
@@ -609,7 +610,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             }
         }
 
-        return [debugStream(`NOEP: episode ${episode} tidak ditemukan di kandidat`)];
+        return [debugStream(`NOEP: ep ${episode} tidak ada. kandidat: ${candidates.slice(0, 3).map(c => c.title).join(' | ')}`)];
     } catch (err) {
         return [debugStream(`ERROR: ${err.message}`)];
     }
