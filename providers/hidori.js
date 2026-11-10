@@ -144,6 +144,10 @@ function cleanTitle(s) {
         .trim();
 }
 
+function cleanPartSuffix(s) {
+    return (s || '').replace(/\b(part|cour)\s*\d+\b/gi, '').trim();
+}
+
 function normalizeTitle(s) {
     return (s || '')
         .toLowerCase()
@@ -260,6 +264,7 @@ function findMatches(results, titles, season, mediaType) {
             title: r.title,
             url: r.url,
             key: normalizeTitle(r.title),
+            baseKey: normalizeTitle(cleanPartSuffix(r.title)),
             tok: latinTokens(r.title),
             rawSeason: seasonOf(r.title, r.url),
             season: seasonOf(r.title, r.url) || 1
@@ -267,9 +272,9 @@ function findMatches(results, titles, season, mediaType) {
         .filter(i => i.key)
         .filter(i => !(mediaType === 'tv' && /\bmovie\b/i.test(i.title)));
 
-    let items = anySeason ? all : all.filter(i => i.season === want);
+    let items = anySeason ? all : all.filter(i => i.season === want || i.rawSeason === null);
     if (!anySeason && items.length === 0) {
-        items = all;
+        items = all.filter(i => i.rawSeason === null || i.season === want);
     }
 
     const targets = titles.map(normalizeTitle).filter(Boolean);
@@ -280,7 +285,7 @@ function findMatches(results, titles, season, mediaType) {
 
     for (const t of targets) {
         for (const item of items) {
-            if (item.key === t && !seen.has(item.url)) {
+            if ((item.key === t || item.baseKey === t) && !seen.has(item.url)) {
                 matches.push(item);
                 seen.add(item.url);
             }
@@ -290,7 +295,7 @@ function findMatches(results, titles, season, mediaType) {
     for (const t of targets) {
         if (t.length < 4) continue;
         for (const item of items) {
-            if (item.key.length >= 4 && (item.key.indexOf(t) >= 0 || t.indexOf(item.key) >= 0)) {
+            if (item.key.length >= 4 && (item.key.indexOf(t) >= 0 || t.indexOf(item.key) >= 0 || item.baseKey.indexOf(t) >= 0)) {
                 if (!seen.has(item.url)) {
                     matches.push(item);
                     seen.add(item.url);
@@ -558,6 +563,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             }
         }
 
+        if (candidates.length === 0 && episode > 12) {
+            const part2Results = await searchWithFallback(`${info.title} Part 2`);
+            candidates = findMatches(part2Results, [`${info.title} Part 2`, info.title], seasonNum, mediaType);
+        }
+
         if (candidates.length === 0) {
             return [debugStream(`NOMATCH: ${info.title}`)];
         }
@@ -574,8 +584,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             const numbered = episodes.filter(e => e.episodeNum !== null);
             let target = numbered.find(e => e.episodeNum === episode);
 
-            if (!target && numbered.length > 0 && episode > numbered.length) {
-                const relEp = episode - numbered.length;
+            const isPart2Candidate = /\b(part|cour|2nd)\s*2\b/i.test(match.title + ' ' + match.url);
+            if (!target && isPart2Candidate && episode > 12) {
+                const relEp = episode - 12;
                 target = numbered.find(e => e.episodeNum === relEp);
             }
 
@@ -590,7 +601,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 }
             }
 
-            if (!target && episodes.length >= episode) {
+            if (!target && episodes.length >= episode && !isPart2Candidate) {
                 target = episodes[episode - 1];
             }
 
