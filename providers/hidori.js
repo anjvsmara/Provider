@@ -145,11 +145,18 @@ function cleanTitle(s) {
 }
 
 function normalizeTitle(s) {
-    return (s || '').toLowerCase().replace(/[\s!-\/:-@\[-`{-~\u3000-\u303f\uff01-\uff0f]+/g, '');
+    return (s || '')
+        .toLowerCase()
+        .replace(/×/g, 'x')
+        .replace(/[\s!-\/:-@\[-`{-~\u3000-\u303f\uff01-\uff0f]+/g, '');
 }
 
 function latinTokens(s) {
-    return (s || '').toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 0);
+    return (s || '')
+        .toLowerCase()
+        .replace(/×/g, 'x')
+        .split(/[^a-z0-9]+/)
+        .filter(t => t.length > 0);
 }
 
 function seasonOf(title) {
@@ -172,7 +179,11 @@ function anchorsIn(html) {
 }
 
 function cleanQuery(q) {
-    return String(q || '').replace(/[:.~!?'"’‘“”`\-–—]/g, ' ').replace(/\s+/g, ' ').trim();
+    return String(q || '')
+        .replace(/×/g, 'x')
+        .replace(/[:.~!?'"’‘“”`\-–—]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 async function fetchWorkingDocument(pathOrUrl) {
@@ -240,7 +251,7 @@ async function searchWithFallback(q) {
     return results;
 }
 
-function findBestMatch(results, titles, season, mediaType) {
+function findMatches(results, titles, season, mediaType) {
     const anySeason = season === 'any';
     const want = anySeason ? null : (Number(season) > 1 ? Number(season) : 1);
 
@@ -257,27 +268,37 @@ function findBestMatch(results, titles, season, mediaType) {
         .filter(i => !(mediaType === 'tv' && /\bmovie\b/i.test(i.title)));
 
     let items = anySeason ? all : all.filter(i => i.season === want);
-    if (!anySeason && items.length === 0 && want > 1) {
-        items = all.filter(i => i.rawSeason === null);
+    if (!anySeason && items.length === 0) {
+        items = all;
     }
 
     const targets = titles.map(normalizeTitle).filter(Boolean);
-    if (items.length === 0 || targets.length === 0) return null;
+    if (items.length === 0 || targets.length === 0) return [];
+
+    const matches = [];
+    const seen = new Set();
 
     for (const t of targets) {
-        const hit = items.find(i => i.key === t);
-        if (hit) return hit;
+        for (const item of items) {
+            if (item.key === t && !seen.has(item.url)) {
+                matches.push(item);
+                seen.add(item.url);
+            }
+        }
     }
 
     for (const t of targets) {
         if (t.length < 4) continue;
-        const hits = items.filter(i => i.key.length >= 4 && (i.key.indexOf(t) >= 0 || t.indexOf(i.key) >= 0));
-        if (hits.length) {
-            return hits.reduce((a, b) => (b.key.length < a.key.length ? b : a));
+        for (const item of items) {
+            if (item.key.length >= 4 && (item.key.indexOf(t) >= 0 || t.indexOf(item.key) >= 0)) {
+                if (!seen.has(item.url)) {
+                    matches.push(item);
+                    seen.add(item.url);
+                }
+            }
         }
     }
 
-    let best = null;
     for (const title of titles) {
         const tTok = [...new Set(latinTokens(title))];
         if (tTok.length < 2) continue;
@@ -285,14 +306,16 @@ function findBestMatch(results, titles, season, mediaType) {
             const itemSet = new Set(item.tok);
             const shared = tTok.filter(w => itemSet.has(w)).length;
             const ratio = shared / tTok.length;
-            if (shared < 2 || ratio < 0.6) continue;
-
-            if (!best || ratio > best.ratio || (ratio === best.ratio && item.tok.length < best.item.tok.length)) {
-                best = { item, ratio };
+            if (shared >= 2 && ratio >= 0.5) {
+                if (!seen.has(item.url)) {
+                    matches.push(item);
+                    seen.add(item.url);
+                }
             }
         }
     }
-    return best ? best.item : null;
+
+    return matches;
 }
 
 async function getEpisodes(animeUrl) {
@@ -517,59 +540,62 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         if (results.length === 0 && info.originalTitle) {
             results = await searchWithFallback(info.originalTitle);
         }
-        let match = findBestMatch(results, [info.title, info.originalTitle], seasonNum, mediaType);
 
-        let aliases = [];
-        if (!match) {
-            aliases = await getAniListTitles(info.title);
-            match = findBestMatch(results, aliases, seasonNum, mediaType);
+        let candidates = findMatches(results, [info.title, info.originalTitle], seasonNum, mediaType);
+
+        if (candidates.length === 0) {
+            const aliases = await getAniListTitles(info.title);
+            candidates = findMatches(results, aliases, seasonNum, mediaType);
 
             for (const alias of aliases) {
-                if (match) break;
+                if (candidates.length > 0) break;
                 const aliasResults = await searchWithFallback(alias);
-                const aliasMatch = findBestMatch(aliasResults, [alias], seasonNum, mediaType);
-                if (aliasMatch) {
-                    match = aliasMatch;
+                const aliasMatches = findMatches(aliasResults, [alias], seasonNum, mediaType);
+                if (aliasMatches.length > 0) {
+                    candidates = aliasMatches;
                     break;
                 }
             }
         }
 
-        if (!match) {
+        if (candidates.length === 0) {
             return [debugStream(`NOMATCH: ${info.title}`)];
         }
 
-        const episodes = await getEpisodes(match.url);
-        if (mediaType === 'movie') {
-            const epUrl = episodes.length > 0 ? (episode && episodes.length >= episode ? episodes[episode - 1].url : episodes[0].url) : match.url;
-            const streams = await extractStreamsFromEpisode(epUrl);
-            return streams.length ? streams : [debugStream("NOSTREAM found for movie")];
-        }
+        for (const match of candidates) {
+            const episodes = await getEpisodes(match.url);
+            if (mediaType === 'movie') {
+                const epUrl = episodes.length > 0 ? (episode && episodes.length >= episode ? episodes[episode - 1].url : episodes[0].url) : match.url;
+                const streams = await extractStreamsFromEpisode(epUrl);
+                if (streams.length > 0) return streams;
+                continue;
+            }
 
-        const numbered = episodes.filter(e => e.episodeNum !== null);
-        let target = numbered.find(e => e.episodeNum === episode);
+            const numbered = episodes.filter(e => e.episodeNum !== null);
+            let target = numbered.find(e => e.episodeNum === episode);
 
-        if (!target && mediaType === 'tv' && seasonNum > 1 && info.seasons) {
-            const prevSum = Object.keys(info.seasons)
-                .filter(k => Number(k) > 0 && Number(k) < seasonNum)
-                .reduce((a, k) => a + info.seasons[k], 0);
-            if (prevSum > 0) {
-                const absEp = prevSum + Number(episode);
-                const absTarget = numbered.find(e => e.episodeNum === absEp) || episodes.find(e => e.episodeNum === absEp);
-                if (absTarget) target = absTarget;
+            if (!target && mediaType === 'tv' && seasonNum > 1 && info.seasons) {
+                const prevSum = Object.keys(info.seasons)
+                    .filter(k => Number(k) > 0 && Number(k) < seasonNum)
+                    .reduce((a, k) => a + info.seasons[k], 0);
+                if (prevSum > 0) {
+                    const absEp = prevSum + Number(episode);
+                    const absTarget = numbered.find(e => e.episodeNum === absEp) || episodes.find(e => e.episodeNum === absEp);
+                    if (absTarget) target = absTarget;
+                }
+            }
+
+            if (!target && episodes.length >= episode) {
+                target = episodes[episode - 1];
+            }
+
+            if (target) {
+                const streams = await extractStreamsFromEpisode(target.url);
+                if (streams.length > 0) return streams;
             }
         }
 
-        if (!target && episodes.length >= episode) {
-            target = episodes[episode - 1];
-        }
-
-        if (!target) {
-            return [debugStream(`NOEP: episode ${episode} tidak ditemukan (total ${episodes.length})`)];
-        }
-
-        const streams = await extractStreamsFromEpisode(target.url);
-        return streams.length ? streams : [debugStream("NOSTREAM found for episode")];
+        return [debugStream(`NOEP: episode ${episode} tidak ditemukan di kandidat`)];
     } catch (err) {
         return [debugStream(`ERROR: ${err.message}`)];
     }
