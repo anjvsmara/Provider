@@ -282,9 +282,23 @@ async function getEpisodes(animeUrl) {
 
 function isHidoriDirectMedia(url) {
     const u = (url || '').toLowerCase();
-    if (isSkippedHost(u)) return false;
-    return (u.includes('.m3u8') || u.includes('.mp4') || u.includes('/stream-vid/')) &&
-           (u.includes('storagehidori') || u.includes('stotagehidori') || u.includes('storeghido') || u.includes('ayokunjungi') || u.includes('hidoristream'));
+    if (!u.startsWith('http') || isSkippedHost(u)) return false;
+    
+    const isHidoriDomain = u.includes('hidoristream') || 
+                           u.includes('ayokunjungi') || 
+                           u.includes('storagehidori') || 
+                           u.includes('stotagehidori') || 
+                           u.includes('storeghido') ||
+                           u.includes('createmyakun123');
+                           
+    if (!isHidoriDomain) return false;
+
+    return u.includes('.m3u8') || 
+           u.includes('.mp4') || 
+           u.includes('/stream/') || 
+           u.includes('/stream-vid/') || 
+           u.includes('/files/') ||
+           u.includes('/media/');
 }
 
 function formatStreamObject(url, quality, pageUrl) {
@@ -304,21 +318,6 @@ async function extractStreamsFromEpisode(episodeUrl) {
     const { html, url: pageUrl } = await fetchWorkingDocument(episodeUrl);
     const streams = [];
 
-    const downloadSectionRe = /<(?:div|ul|li|tr|option)\b[^>]*class="[^"]*(?:soraddl|soraurlx|dlbox|download|mirror|eplister)[^"]*"[^>]*>([\s\S]*?)<\/(?:div|ul|li|tr|option)>/gi;
-    let secMatch;
-    while ((secMatch = downloadSectionRe.exec(html)) !== null) {
-        const block = secMatch[1];
-        const qInBlock = parseQualityText(block);
-
-        for (const a of anchorsIn(block)) {
-            const href = getAttr(a.tag, 'href') || getAttr(a.tag, 'value');
-            if (href && href.startsWith('http')) {
-                const obj = formatStreamObject(href, qInBlock, pageUrl);
-                if (obj) streams.push(obj);
-            }
-        }
-    }
-
     const iframeRe = /<iframe\b[^>]*>/gi;
     let ifm;
     while ((ifm = iframeRe.exec(html)) !== null) {
@@ -329,9 +328,31 @@ async function extractStreamsFromEpisode(episodeUrl) {
         }
     }
 
-    const mediaRe = /https?:\/\/[^"'\s<>]+?\.(?:m3u8|mp4)(?:\?[^"'\s<>]*)?/gi;
+    const optionRe = /<option\b[^>]*value=["']([^"']+)["'][^>]*>([\s\S]*?)<\/option>/gi;
+    let opt;
+    while ((opt = optionRe.exec(html)) !== null) {
+        const val = opt[1].trim();
+        const text = stripTags(opt[2]);
+        const q = parseQualityText(text);
+        if (val.startsWith('http')) {
+            const obj = formatStreamObject(val, q, pageUrl);
+            if (obj) streams.push(obj);
+        }
+    }
+
+    const anchors = anchorsIn(html);
+    for (const a of anchors) {
+        const href = getAttr(a.tag, 'href') || getAttr(a.tag, 'value');
+        if (href && href.startsWith('http')) {
+            const q = parseQualityText(stripTags(a.inner)) || getQualityFromUrl(href);
+            const obj = formatStreamObject(href, q, pageUrl);
+            if (obj) streams.push(obj);
+        }
+    }
+
+    const rawRe = /https?:\/\/[^"'\s<>]+?(?:\.m3u8|\.mp4|\/stream\/|\/stream-vid\/)(?:\?[^"'\s<>]*)?/gi;
     let mrm;
-    while ((mrm = mediaRe.exec(html)) !== null) {
+    while ((mrm = rawRe.exec(html)) !== null) {
         const url = mrm[0];
         const obj = formatStreamObject(url, null, pageUrl);
         if (obj) streams.push(obj);
@@ -442,6 +463,18 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
         const numbered = episodes.filter(e => e.episodeNum !== null);
         let target = numbered.find(e => e.episodeNum === episode);
+
+        if (!target && mediaType === 'tv' && seasonNum > 1 && info.seasons) {
+            const prevSum = Object.keys(info.seasons)
+                .filter(k => Number(k) > 0 && Number(k) < seasonNum)
+                .reduce((a, k) => a + info.seasons[k], 0);
+            if (prevSum > 0) {
+                const absEp = prevSum + Number(episode);
+                const absTarget = numbered.find(e => e.episodeNum === absEp) || episodes.find(e => e.episodeNum === absEp);
+                if (absTarget) target = absTarget;
+            }
+        }
+
         if (!target && episodes.length >= episode) {
             target = episodes[episode - 1];
         }
