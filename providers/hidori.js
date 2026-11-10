@@ -272,10 +272,12 @@ function findMatches(results, titles, season, mediaType) {
         .filter(i => i.key)
         .filter(i => !(mediaType === 'tv' && /\bmovie\b/i.test(i.title)));
 
-    let items = anySeason ? all : all.filter(i => i.season === want || i.rawSeason === null);
-    if (!anySeason && items.length === 0) {
-        items = all.filter(i => i.rawSeason === null || i.season === want);
-    }
+    let items = anySeason ? all : all.filter(i => {
+        if (want === 1) {
+            return (i.season === 1 || i.rawSeason === null) && i.rawSeason !== 2 && i.rawSeason !== 3;
+        }
+        return i.season === want;
+    });
 
     const targets = titles.map(normalizeTitle).filter(Boolean);
     if (items.length === 0 || targets.length === 0) return [];
@@ -381,12 +383,16 @@ function isHidoriDirectMedia(url) {
                            
     if (!isHidoriDomain) return false;
 
+    if (/\/stream\/?$/i.test(u) || /\/files\/?$/i.test(u) || /\/media\/?$/i.test(u) || /\/stream-vid\/?$/i.test(u)) {
+        return false;
+    }
+
     return u.includes('.m3u8') || 
            u.includes('.mp4') || 
-           u.includes('/stream/') || 
-           u.includes('/stream-vid/') || 
-           u.includes('/files/') ||
-           u.includes('/media/');
+           /\/stream\/[a-z0-9_-]+/i.test(u) || 
+           /\/stream-vid\/[a-z0-9_-]+/i.test(u) || 
+           /\/files\/[a-z0-9_-]+/i.test(u) ||
+           /\/media\/[a-z0-9_-]+/i.test(u);
 }
 
 function formatStreamObject(url, quality, pageUrl) {
@@ -453,7 +459,7 @@ async function extractStreamsFromEpisode(episodeUrl) {
         }
     }
 
-    const rawRe = /https?:\/\/[^"'\s<>]+?(?:\.m3u8|\.mp4|\/stream\/|\/stream-vid\/|\/files\/|\/media\/)(?:\?[^"'\s<>]*)?/gi;
+    const rawRe = /https?:\/\/[^"'\s<>]+?(?:\.m3u8|\.mp4|\/stream\/[a-zA-Z0-9_-]+|\/stream-vid\/[a-zA-Z0-9_-]+|\/files\/[a-zA-Z0-9_-]+|\/media\/[a-zA-Z0-9_-]+)(?:\?[^"'\s<>]*)?/gi;
     let mrm;
     while ((mrm = rawRe.exec(expandedHtml)) !== null) {
         const url = mrm[0];
@@ -542,30 +548,25 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         const seasonNum = Number(season) || 1;
 
         let results = await searchWithFallback(info.title);
-        if (results.length === 0 && info.originalTitle) {
-            results = await searchWithFallback(info.originalTitle);
+        if (info.originalTitle) {
+            const origRes = await searchWithFallback(info.originalTitle);
+            results = results.concat(origRes);
+        }
+
+        if (episode > 12) {
+            const part2Res = await searchWithFallback(`${info.title} Part 2`);
+            results = results.concat(part2Res);
         }
 
         let candidates = findMatches(results, [info.title, info.originalTitle], seasonNum, mediaType);
 
         if (candidates.length === 0) {
             const aliases = await getAniListTitles(info.title);
-            candidates = findMatches(results, aliases, seasonNum, mediaType);
-
             for (const alias of aliases) {
-                if (candidates.length > 0) break;
                 const aliasResults = await searchWithFallback(alias);
-                const aliasMatches = findMatches(aliasResults, [alias], seasonNum, mediaType);
-                if (aliasMatches.length > 0) {
-                    candidates = aliasMatches;
-                    break;
-                }
+                results = results.concat(aliasResults);
             }
-        }
-
-        if (candidates.length === 0 && episode > 12) {
-            const part2Results = await searchWithFallback(`${info.title} Part 2`);
-            candidates = findMatches(part2Results, [`${info.title} Part 2`, info.title], seasonNum, mediaType);
+            candidates = findMatches(results, aliases, seasonNum, mediaType);
         }
 
         if (candidates.length === 0) {
