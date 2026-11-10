@@ -12,7 +12,6 @@ const SOURCE_DOMAINS = [
 ];
 
 const SKIP_HOSTS = ['mirrored.to', 'dsvplay.com', 'vidhidevip.com', 'callistanise.com', 'vidhidepro', 'vidhide', 'krakenfiles.com'];
-
 const B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 function b64ToBytes(str) {
@@ -61,16 +60,8 @@ function utf8Decode(bytes) {
 function safeB64Decode(str) {
     if (!str) return "";
     const clean = str.replace(/\s+/g, '');
-    try {
-        if (typeof atob === 'function') {
-            return atob(clean);
-        }
-    } catch (e) {}
-    try {
-        return utf8Decode(b64ToBytes(clean));
-    } catch (e) {
-        return "";
-    }
+    try { if (typeof atob === 'function') return atob(clean); } catch (e) {}
+    try { return utf8Decode(b64ToBytes(clean)); } catch (e) { return ""; }
 }
 
 function isSkippedHost(url) {
@@ -244,7 +235,7 @@ async function searchHidoriStream(query) {
 
 async function searchWithFallback(q) {
     const cleaned = cleanQuery(q);
-    if (!cleaned) return [];
+    if (!cleaned || cleaned.toLowerCase() === 'sesame' || /[\u3040-\u30ff\u4e00-\u9fff]/.test(cleaned)) return [];
     let results = await searchHidoriStream(cleaned);
     if (results.length === 0) {
         const words = cleaned.split(' ').filter(w => w.length > 0);
@@ -272,12 +263,16 @@ function findMatches(results, titles, season, mediaType) {
         .filter(i => i.key)
         .filter(i => !(mediaType === 'tv' && /\bmovie\b/i.test(i.title)));
 
-    let items = anySeason ? all : all.filter(i => {
+    let items = all;
+    if (!anySeason) {
         if (want === 1) {
-            return (i.season === 1 || i.rawSeason === null) && i.rawSeason !== 2 && i.rawSeason !== 3;
+            items = all.filter(i => i.season === 1 || i.rawSeason === null || /\bpart\s*2\b/i.test(i.title));
+        } else {
+            const exactMatches = all.filter(i => i.rawSeason === want);
+            items = exactMatches.length > 0 ? exactMatches : all.filter(i => i.rawSeason === null || i.season === want);
         }
-        return i.season === want;
-    });
+    }
+    if (items.length === 0) items = all;
 
     const targets = titles.map(normalizeTitle).filter(Boolean);
     if (items.length === 0 || targets.length === 0) return [];
@@ -371,7 +366,7 @@ async function getEpisodes(animeUrl) {
 }
 
 function isHidoriDirectMedia(url) {
-    const u = (url || '').toLowerCase();
+    const u = (url || '').toLowerCase().trim();
     if (!u.startsWith('http') || isSkippedHost(u)) return false;
     
     const isHidoriDomain = u.includes('hidoristream') || 
@@ -547,8 +542,15 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         const info = await getAnimeTitle(resolved.id, mediaType);
         const seasonNum = Number(season) || 1;
 
-        let results = await searchWithFallback(info.title);
-        if (info.originalTitle) {
+        let searchTitles = [info.title];
+
+        let results = [];
+        for (const st of searchTitles) {
+            const r = await searchWithFallback(st);
+            results = results.concat(r);
+        }
+
+        if (results.length === 0 && info.originalTitle && info.originalTitle.toLowerCase() !== 'sesame') {
             const origRes = await searchWithFallback(info.originalTitle);
             results = results.concat(origRes);
         }
@@ -558,7 +560,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             results = results.concat(part2Res);
         }
 
-        let candidates = findMatches(results, [info.title, info.originalTitle], seasonNum, mediaType);
+        let candidates = findMatches(results, searchTitles, seasonNum, mediaType);
 
         if (candidates.length === 0) {
             const aliases = await getAniListTitles(info.title);
@@ -583,15 +585,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             }
 
             const numbered = episodes.filter(e => e.episodeNum !== null);
-            let target = numbered.find(e => e.episodeNum === episode);
+            let target = null;
 
-            const isPart2Candidate = /\b(part|cour|2nd)\s*2\b/i.test(match.title + ' ' + match.url);
-            if (!target && isPart2Candidate && episode > 12) {
-                const relEp = episode - 12;
-                target = numbered.find(e => e.episodeNum === relEp);
-            }
-
-            if (!target && mediaType === 'tv' && seasonNum > 1 && info.seasons) {
+            if (mediaType === 'tv' && seasonNum > 1 && info.seasons) {
                 const prevSum = Object.keys(info.seasons)
                     .filter(k => Number(k) > 0 && Number(k) < seasonNum)
                     .reduce((a, k) => a + info.seasons[k], 0);
@@ -602,7 +598,16 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 }
             }
 
-            if (!target && episodes.length >= episode && !isPart2Candidate) {
+            if (!target) {
+                target = numbered.find(e => e.episodeNum === episode);
+            }
+
+            if (!target && episode > 12) {
+                const relEp = episode - 12;
+                target = numbered.find(e => e.episodeNum === relEp);
+            }
+
+            if (!target && episodes.length >= episode && seasonNum === 1) {
                 target = episodes[episode - 1];
             }
 
