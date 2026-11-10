@@ -582,6 +582,23 @@ function pickAnime(block) {
     return null;
 }
 
+function cleanQuery(q) {
+    return String(q || '').replace(/[:.~!?'"’‘“”`]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+async function searchWithFallback(q) {
+    const cleaned = cleanQuery(q);
+    if (!cleaned) return [];
+    let results = await searchKuronime(cleaned);
+    if (results.length === 0) {
+        const words = cleaned.split(' ').filter(w => w.length > 0);
+        if (words.length > 3) {
+            results = await searchKuronime(words.slice(0, 3).join(' '));
+        }
+    }
+    return results;
+}
+
 async function searchKuronime(query) {
     const html = await fetchText(`${BASE_URL}/?s=${encodeURIComponent(query)}`, {
         headers: { "Referer": BASE_URL }
@@ -841,9 +858,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
         const seasonNum = Number(season) || 1;
 
-        let results = await searchKuronime(info.title);
+        let results = await searchWithFallback(info.title);
         if (results.length === 0 && info.originalTitle) {
-            results = await searchKuronime(info.originalTitle);
+            results = await searchWithFallback(info.originalTitle);
         }
         let match = findBestMatch(results, [info.title, info.originalTitle], seasonNum, mediaType);
 
@@ -855,7 +872,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
             for (const alias of aliases) {
                 if (match) break;
-                const aliasResults = await searchKuronime(alias);
+                const aliasResults = await searchWithFallback(alias);
                 const aliasMatch = findBestMatch(aliasResults, [alias], seasonNum, mediaType);
                 if (aliasMatch) {
                     match = aliasMatch;
