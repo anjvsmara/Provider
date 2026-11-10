@@ -159,11 +159,11 @@ function latinTokens(s) {
         .filter(t => t.length > 0);
 }
 
-function seasonOf(title) {
-    const t = (title || '').toLowerCase();
-    let m = t.match(/season\s*(\d+)/);
+function seasonOf(title, url) {
+    const t = ((title || '') + ' ' + (url || '')).toLowerCase();
+    let m = t.match(/season[-_\s]*(\d+)/i) || t.match(/\bs(\d+)\b/i) || t.match(/-s(\d+)-/i);
     if (m) return parseInt(m[1], 10);
-    m = t.match(/\b(\d+)(?:st|nd|rd|th)\s+season\b/);
+    m = t.match(/\b(\d+)(?:st|nd|rd|th)[-_\s]+season\b/i);
     if (m) return parseInt(m[1], 10);
     return null;
 }
@@ -261,8 +261,8 @@ function findMatches(results, titles, season, mediaType) {
             url: r.url,
             key: normalizeTitle(r.title),
             tok: latinTokens(r.title),
-            rawSeason: seasonOf(r.title),
-            season: seasonOf(r.title) || 1
+            rawSeason: seasonOf(r.title, r.url),
+            season: seasonOf(r.title, r.url) || 1
         }))
         .filter(i => i.key)
         .filter(i => !(mediaType === 'tv' && /\bmovie\b/i.test(i.title)));
@@ -573,6 +573,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
             const numbered = episodes.filter(e => e.episodeNum !== null);
             let target = numbered.find(e => e.episodeNum === episode);
+
+            if (!target && numbered.length > 0 && episode > numbered.length) {
+                const relEp = episode - numbered.length;
+                target = numbered.find(e => e.episodeNum === relEp);
+            }
 
             if (!target && mediaType === 'tv' && seasonNum > 1 && info.seasons) {
                 const prevSum = Object.keys(info.seasons)
