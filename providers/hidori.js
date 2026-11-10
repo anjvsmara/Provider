@@ -87,8 +87,10 @@ function debugStream(msg) {
 
 async function fetchText(url, options) {
     const opts = options || {};
+    const timeout = (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(10000) : undefined;
     const res = await fetch(url, {
         ...opts,
+        signal: timeout,
         headers: { "User-Agent": USER_AGENT, ...(opts.headers || {}) }
     });
     if (res.status >= 400) throw new Error(`HTTP ${res.status} for ${url}`);
@@ -362,7 +364,7 @@ async function getEpisodes(animeUrl) {
         return true;
     });
 
-    return uniqueEpisodes.reverse();
+    return uniqueEpisodes;
 }
 
 function isHidoriDirectMedia(url) {
@@ -555,11 +557,6 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             results = results.concat(origRes);
         }
 
-        if (episode > 12) {
-            const part2Res = await searchWithFallback(`${info.title} Part 2`);
-            results = results.concat(part2Res);
-        }
-
         let candidates = findMatches(results, searchTitles, seasonNum, mediaType);
 
         if (candidates.length === 0) {
@@ -600,11 +597,6 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
             if (!target) {
                 target = numbered.find(e => e.episodeNum === episode);
-            }
-
-            if (!target && episode > 12) {
-                const relEp = episode - 12;
-                target = numbered.find(e => e.episodeNum === relEp);
             }
 
             if (!target && episodes.length >= episode && seasonNum === 1) {
