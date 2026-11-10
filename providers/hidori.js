@@ -13,6 +13,66 @@ const SOURCE_DOMAINS = [
 
 const SKIP_HOSTS = ['mirrored.to', 'dsvplay.com', 'vidhidevip.com', 'callistanise.com', 'vidhidepro', 'vidhide', 'krakenfiles.com'];
 
+const B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function b64ToBytes(str) {
+    const out = [];
+    let buf = 0, bits = 0;
+    for (let i = 0; i < str.length; i++) {
+        const ch = str.charAt(i);
+        if (ch === '=') break;
+        const idx = B64_CHARS.indexOf(ch);
+        if (idx < 0) continue;
+        buf = ((buf << 6) | idx) & 0xffffff;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push((buf >> bits) & 0xff);
+        }
+    }
+    return out;
+}
+
+function utf8Decode(bytes) {
+    let s = '';
+    let i = 0;
+    while (i < bytes.length) {
+        const c = bytes[i++];
+        let cp;
+        if (c < 0x80) {
+            cp = c;
+        } else if (c >= 0xc0 && c < 0xe0) {
+            cp = ((c & 0x1f) << 6) | (bytes[i++] & 0x3f);
+        } else if (c >= 0xe0 && c < 0xf0) {
+            cp = ((c & 0x0f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f);
+        } else {
+            cp = ((c & 0x07) << 18) | ((bytes[i++] & 0x3f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f);
+        }
+        if (cp >= 0x10000) {
+            cp -= 0x10000;
+            s += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
+        } else {
+            s += String.fromCharCode(cp);
+        }
+    }
+    return s;
+}
+
+function safeB64Decode(str) {
+    if (!str) return "";
+    const clean = str.replace(/\s+/g, '');
+    try {
+        if (typeof atob === 'function') {
+            return atob(clean);
+        }
+    } catch (e) {}
+    try {
+        return utf8Decode(b64ToBytes(clean));
+    } catch (e) {
+        return "";
+    }
+}
+
 function isSkippedHost(url) {
     const u = (url || '').toLowerCase();
     return SKIP_HOSTS.some(h => u.indexOf(h) >= 0);
@@ -316,54 +376,79 @@ function formatStreamObject(url, quality, pageUrl) {
 
 async function extractStreamsFromEpisode(episodeUrl) {
     const { html, url: pageUrl } = await fetchWorkingDocument(episodeUrl);
-    const streams = [];
+    const rawStreams = [];
 
-    const iframeRe = /<iframe\b[^>]*>/gi;
-    let ifm;
-    while ((ifm = iframeRe.exec(html)) !== null) {
-        const src = getAttr(ifm[0], 'data-litespeed-src') || getAttr(ifm[0], 'data-src') || getAttr(ifm[0], 'src');
-        if (src && src.startsWith('http')) {
-            const obj = formatStreamObject(src, null, pageUrl);
-            if (obj) streams.push(obj);
+    let expandedHtml = html;
+    const optionValRe = /<option[^>]+value=["']([A-Za-z0-9+/=]{20,})["']/gi;
+    let optMatch;
+    while ((optMatch = optionValRe.exec(html)) !== null) {
+        const decoded = safeB64Decode(optMatch[1]);
+        if (decoded && decoded.includes('http')) {
+            expandedHtml += "\n" + decoded;
+        }
+    }
+
+    const blockRe = /<(?:div|tr|li|p)\b[^>]*class="[^"]*(?:soraddl|soraurlx|dlbox|download|mirror|server)[^"]*"[^>]*>([\s\S]*?)<\/(?:div|tr|li|p)>/gi;
+    let blk;
+    while ((blk = blockRe.exec(expandedHtml)) !== null) {
+        const blockContent = blk[1];
+        const qInBlock = parseQualityText(blockContent);
+        for (const a of anchorsIn(blockContent)) {
+            const href = getAttr(a.tag, 'href') || getAttr(a.tag, 'value');
+            if (href && href.startsWith('http')) {
+                const q = parseQualityText(stripTags(a.inner)) || qInBlock;
+                const obj = formatStreamObject(href, q, pageUrl);
+                if (obj) rawStreams.push(obj);
+            }
         }
     }
 
     const optionRe = /<option\b[^>]*value=["']([^"']+)["'][^>]*>([\s\S]*?)<\/option>/gi;
     let opt;
-    while ((opt = optionRe.exec(html)) !== null) {
-        const val = opt[1].trim();
+    while ((opt = optionRe.exec(expandedHtml)) !== null) {
+        let val = opt[1].trim();
         const text = stripTags(opt[2]);
-        const q = parseQualityText(text);
+        const q = parseQualityText(text) || parseQualityText(val);
         if (val.startsWith('http')) {
             const obj = formatStreamObject(val, q, pageUrl);
-            if (obj) streams.push(obj);
+            if (obj) rawStreams.push(obj);
         }
     }
 
-    const anchors = anchorsIn(html);
-    for (const a of anchors) {
-        const href = getAttr(a.tag, 'href') || getAttr(a.tag, 'value');
-        if (href && href.startsWith('http')) {
-            const q = parseQualityText(stripTags(a.inner)) || getQualityFromUrl(href);
-            const obj = formatStreamObject(href, q, pageUrl);
-            if (obj) streams.push(obj);
+    const iframeRe = /<iframe\b[^>]*>/gi;
+    let ifm;
+    while ((ifm = iframeRe.exec(expandedHtml)) !== null) {
+        const src = getAttr(ifm[0], 'data-litespeed-src') || getAttr(ifm[0], 'data-src') || getAttr(ifm[0], 'src');
+        if (src && src.startsWith('http')) {
+            const obj = formatStreamObject(src, null, pageUrl);
+            if (obj) rawStreams.push(obj);
         }
     }
 
-    const rawRe = /https?:\/\/[^"'\s<>]+?(?:\.m3u8|\.mp4|\/stream\/|\/stream-vid\/)(?:\?[^"'\s<>]*)?/gi;
+    const rawRe = /https?:\/\/[^"'\s<>]+?(?:\.m3u8|\.mp4|\/stream\/|\/stream-vid\/|\/files\/|\/media\/)(?:\?[^"'\s<>]*)?/gi;
     let mrm;
-    while ((mrm = rawRe.exec(html)) !== null) {
+    while ((mrm = rawRe.exec(expandedHtml)) !== null) {
         const url = mrm[0];
         const obj = formatStreamObject(url, null, pageUrl);
-        if (obj) streams.push(obj);
+        if (obj) rawStreams.push(obj);
     }
 
-    const seen = new Set();
-    return streams.filter(s => {
-        if (!s || !s.url || seen.has(s.url)) return false;
-        seen.add(s.url);
-        return true;
-    });
+    const streamMap = new Map();
+    for (const s of rawStreams) {
+        if (!s || !s.url) continue;
+        const normUrl = s.url.trim().replace(/\/$/, '');
+        
+        if (!streamMap.has(normUrl)) {
+            streamMap.set(normUrl, s);
+        } else {
+            const existing = streamMap.get(normUrl);
+            if (existing.quality === "Auto" && s.quality !== "Auto") {
+                streamMap.set(normUrl, s);
+            }
+        }
+    }
+
+    return Array.from(streamMap.values());
 }
 
 async function getAniListTitles(title) {
