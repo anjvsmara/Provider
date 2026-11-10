@@ -352,7 +352,7 @@ async function getEpisodes(animeUrl) {
     while (scope && (m = liRe.exec(scope)) !== null) {
         const a = anchorsIn(m[1]).find(item => {
             const h = getAttr(item.tag, 'href') || '';
-            return h.indexOf('episode') >= 0 || h.indexOf('/nonton-') >= 0;
+            return h.startsWith('http') && (h.indexOf('episode') >= 0 || h.indexOf('/nonton-') >= 0 || /\d/.test(stripTags(item.inner)));
         });
         if (!a) continue;
         const href = getAttr(a.tag, 'href');
