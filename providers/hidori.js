@@ -334,12 +334,22 @@ async function getEpisodes(animeUrl) {
         scope = epEnd > 0 ? sub.slice(0, epEnd) : sub.slice(0, 15000);
     }
 
-    if (!scope) return [];
-
     const episodes = [];
+
+    if (!scope) {
+        // Cadangan: markup daftar episode tidak dikenali, pindai semua link episode di halaman
+        for (const a of anchorsIn(html)) {
+            const href = getAttr(a.tag, 'href') || '';
+            if (!/episode|\/nonton-/i.test(href) || !href.startsWith('http')) continue;
+            const rawTitle = stripTags(a.inner);
+            const epMatch = rawTitle.match(/(?:episode|eps?|ep)\s*(\d+(?:\.\d+)?)/i) || href.match(/episode-?(\d+(?:\.\d+)?)/i);
+            episodes.push({ title: rawTitle, episodeNum: epMatch ? parseFloat(epMatch[1]) : null, url: href });
+        }
+    }
+
     const liRe = /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
     let m;
-    while ((m = liRe.exec(scope)) !== null) {
+    while (scope && (m = liRe.exec(scope)) !== null) {
         const a = anchorsIn(m[1]).find(item => {
             const h = getAttr(item.tag, 'href') || '';
             return h.indexOf('episode') >= 0 || h.indexOf('/nonton-') >= 0;
