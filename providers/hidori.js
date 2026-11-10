@@ -274,7 +274,8 @@ function findMatches(results, titles, season, mediaType) {
             items = exactMatches.length > 0 ? exactMatches : all.filter(i => i.rawSeason === null || i.season === want);
         }
     }
-    if (items.length === 0) items = all;
+    // Tidak ada cadangan ke semua hasil: kalau season yang diminta tidak ada, lebih baik NOMATCH
+    // daripada memutar season lain.
 
     const targets = titles.map(normalizeTitle).filter(Boolean);
     if (items.length === 0 || targets.length === 0) return [];
