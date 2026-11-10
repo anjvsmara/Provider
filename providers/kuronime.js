@@ -872,7 +872,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         const episodes = await getEpisodes(match.url);
 
         const seasonEps = info.seasons ? info.seasons[seasonNum] : null;
-        if (mediaType === 'tv' && seasonEps && episodes.length > seasonEps * 1.5 + 2) {
+        if (mediaType === 'tv' && seasonNum > 1 && seasonEps && episodes.length > seasonEps * 1.5 + 2) {
 
             const prevSum = Object.keys(info.seasons)
                 .filter(k => Number(k) > 0 && Number(k) < seasonNum)
