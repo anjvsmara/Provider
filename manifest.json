@@ -3,16 +3,16 @@
   "version": "1.0.0",
   "scrapers": [
     {
-      "id": "Kuronime",
-      "name": "Kuronime",
-      "description": "Provider Kuronime",
+      "id": "Kuro",
+      "name": "Kuro",
+      "description": "Streaming",
       "version": "1.0.0",
       "author": "anjvsmara",
       "supportedTypes": [
         "movie",
         "tv"
       ],
-      "filename": "providers/kuronime.js",
+      "filename": "providers/kuro.js",
       "enabled": true,
       "contentLanguage": [
         "id"
@@ -23,16 +23,16 @@
       ]
     },
     {
-      "id": "Hidori",
-      "name": "Hidori",
-      "description": "Provider HidoriStream",
+      "id": "Hido",
+      "name": "Hido",
+      "description": "Streaming",
       "version": "1.0.0",
       "author": "anjvsmara",
       "supportedTypes": [
         "movie",
         "tv"
       ],
-      "filename": "providers/hidori.js",
+      "filename": "providers/hido.js",
       "enabled": true,
       "contentLanguage": [
         "id"
