@@ -9,9 +9,10 @@ const KIT_SEA=/(?:\b(\d+)(?:st|nd|rd|th)\s+season\b)|(?:\bseason\s*(\d+)\b)|(?:�
 function KIT_SEASON(t){const q=String(t||"").match(KIT_SEA);return q?Number(q[1]||q[2]||q[3]):null}
 function KIT_BASE(t){return String(t||"").replace(/\(\s*\d{4}\s*\)/g," ").replace(/\b\d+(?:st|nd|rd|th)\s+season\b|\bseason\s*\d+\b|\bpart\s*\d+\b|subtitle\s*indonesia|sub\s*indo/gi," ").replace(/第\s*\d+\s*期/g," ").replace(/[:.~!?'"’‘“”`\-–—,]/g," ").replace(/\s+/g," ").toLowerCase().trim()}
 function KIT_QUERY(t){return String(t||"").replace(/\b(\d+)(?:st|nd|rd|th)\s+season\b/gi,"Season $1")}
+function KIT_KEY(x){return String(x||"").replace(/\s+/g,"")}
 function KIT_PICK(results,titles){const entry=titles.map(KIT_SEASON).find(x=>x!=null)||1;const bases=[...new Set(titles.map(KIT_BASE).filter(Boolean))];let best=null;
  for(const r of results){const ps=KIT_SEASON(r.title);if(!(ps===entry||(ps==null&&entry===1)))continue;const rb=KIT_BASE(r.title);if(!rb)continue;const rt=new Set(rb.split(" "));
-  for(const b of bases){const bt=b.split(" ");const ratio=bt.filter(w=>rt.has(w)).length/bt.length;if(ratio<0.8)continue;const sc=ratio+(rb===b?1:0);if(!best||sc>best.sc)best={item:r,sc}}}
+  for(const b of bases){const bt=b.split(" ");const ratio=bt.filter(w=>rt.has(w)).length/bt.length;const same=KIT_KEY(b)===KIT_KEY(rb);if(!same&&ratio<0.8)continue;const sc=(same?2:ratio)+(rb===b?1:0);if(!best||sc>best.sc)best={item:r,sc}}}
  return best?best.item:null}
 async function KIT(raw,epParam){try{const mm=String(raw).match(/^kitsu:(\d+)(?::(\d+))?/i);const ep=mm[2]?Number(mm[2]):(epParam==null?null:Number(epParam));if(!ep)return[O("NOMATCH: kitsu:"+mm[1]+" tidak punya nomor episode")];
  const at=JSON.parse(await m("https://kitsu.io/api/edge/anime/"+mm[1])).data.attributes||{};const t=at.titles||{};
