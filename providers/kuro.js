@@ -20,7 +20,7 @@ catch (t) {
     return "";
 } }).replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#039;|&#39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " "); }
 
-const u = t => (t || "").replace(/[\u200b-\u200d\ufeff\u00ad]/g, "").replace(/[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g, "-").toLowerCase().replace(/[\s!-\/:-@\[-`{-~\u3000-\u303f\uff01-\uff0f]+/g, "");
+
 
 function c(t) { return l(t.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim(); }
 
@@ -124,7 +124,7 @@ async function T(t) { const e = function (t) { return String(t || "").replace(/\
     return []; let n = await P(e); if (0 === n.length) {
     const t = e.split(" ").filter(t => t.length > 0);
     t.length > 3 && (n = await P(t.slice(0, 3).join(" ")));
-} return n.length && (LS = n.slice(0, 3).map(x => x.title.slice(0, 70)).join(" | ")), n; }
+} return n; }
 
 let SC = new Map;
 
@@ -162,7 +162,7 @@ async function R(t, e, n) { const r = [], i = /<iframe\b[^>]*>/gi; let a; for (;
     0 !== t.indexOf("http") || n.has(t) || s(t) || r.push(t);
 } return o(await Promise.all(r.map(t => N(t, e)))); }
 
-let M = "", LS = "";
+let M = "";
 
 function U(t) { return (String(t || "").match(/^https?:\/\/([^\/]+)/) || [])[1] || "?"; }
 
@@ -193,7 +193,7 @@ catch (e) {
 
 const q = { 30984: { 17: 50 } }, K = t + "/mapping";
 
-function z(t) { return O("NOSTREAM [" + (M || "penyebab tidak diketahui") + "] hosts=" + r.join(",") + " " + t); }
+
 
 const KIT_SEA = /(?:\b(\d+)(?:st|nd|rd|th)\s+season\b)|(?:\bseason\s*(\d+)\b)|(?:第\s*(\d+)\s*期)/i;
 
@@ -246,37 +246,36 @@ async function KIT(raw, epParam) {
         const mm = String(raw).match(/^kitsu:(\d+)(?::(\d+))?/i);
         const ep = mm[2] ? Number(mm[2]) : (epParam == null ? null : Number(epParam));
         if (!ep)
-            return [O("[v22] NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
+            return [O("[v23] NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
         const at = JSON.parse(await m("https://kitsu.io/api/edge/anime/" + mm[1])).data.attributes || {};
         const t = at.titles || {};
         const cand = [t.en_jp, at.canonicalTitle, t.en].concat(at.abbreviatedTitles || []).filter(x => x && !/[\u3040-\u30ff\u4e00-\u9fff]/.test(x));
         const titles = [...new Set(cand)];
         const qs = [...new Set(titles.flatMap(x => [x, KIT_QUERY(x)]))].slice(0, 4);
         let res = [];
-        for (const q of qs) {
-            res = res.concat(await T(q));
-        }
+        const parts = await Promise.all(qs.map(q => T(q)));
+        res = [].concat(...parts);
         const seen = new Set();
         res = res.filter(x => !seen.has(x.url) && seen.add(x.url));
         const pick = KIT_PICK(res, titles);
         if (!pick)
-            return [O("[v22] NOMATCH: kitsu:" + mm[1] + " judul=[" + titles.slice(0, 2).join(" | ") + "] query=[" + qs.slice(0, 2).join(" | ") + "] hasil=" + res.length + (res.length ? " -> " + res.slice(0, 3).map(x => x.title.slice(0, 45)).join(" | ") : "") + KIT_DEBUG(res, titles))];
+            return [O("[v23] NOMATCH: kitsu:" + mm[1] + " judul=[" + titles.slice(0, 2).join(" | ") + "] query=[" + qs.slice(0, 2).join(" | ") + "] hasil=" + res.length + (res.length ? " -> " + res.slice(0, 3).map(x => x.title.slice(0, 45)).join(" | ") : "") + KIT_DEBUG(res, titles))];
         const eps = await _(pick.url);
         const hit = eps.find(x => x.episodeNum === ep);
         if (!hit)
-            return [O("[v22] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
+            return [O("[v23] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
         const st = await $(hit.url);
-        return st.length ? st : [O("[v22] NOSTREAM: " + hit.url)];
+        return st.length ? st : [O("[v23] NOSTREAM: " + hit.url)];
     }
     catch (e) {
-        return [O("[v22] NOMATCH: kitsu gagal diambil (" + e.message + ")")];
+        return [O("[v23] NOMATCH: kitsu gagal diambil (" + e.message + ")")];
     }
 }
 
 // --- Entry point Nuvio ---
 async function X(id, type, season, episode) {
   if (!/^kitsu:/i.test(String(id))) {
-    return [O("[v22] NOMATCH: ID " + id + " bukan kitsu. Skrip ini hanya membaca ID kitsu")];
+    return [O("[v23] NOMATCH: ID " + id + " bukan kitsu. Skrip ini hanya membaca ID kitsu")];
   }
   return await KIT(id, episode);
 }
