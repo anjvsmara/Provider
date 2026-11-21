@@ -20,7 +20,7 @@ async function KIT(raw,epParam){try{const mm=String(raw).match(/^kitsu:(\d+)(?::
  let res=[];for(const q of qs){res=res.concat(await T(q))}
  const seen=new Set();res=res.filter(x=>!seen.has(x.url)&&seen.add(x.url));
  const pick=KIT_PICK(res,titles);
- if(!pick)return[O("NOMATCH: kitsu:"+mm[1]+" ("+(titles[0]||"-")+") tidak ada di Kuronime [hasil: "+res.length+"]")];
+ if(!pick)return[O("NOMATCH: kitsu:"+mm[1]+" judul=["+titles.slice(0,2).join(" | ")+"] query=["+qs.slice(0,2).join(" | ")+"] hasil="+res.length+(res.length?" -> "+res.slice(0,3).map(x=>x.title.slice(0,45)).join(" | "):""))];
  const eps=await _(pick.url);const hit=eps.find(x=>x.episodeNum===ep);
  if(!hit)return[O("NOEP: episode "+ep+" tidak ada di "+pick.title+" ("+eps.length+" episode)")];
  const st=await $(hit.url);return st.length?st:[O("NOSTREAM: "+hit.url)]}catch(e){return[O("NOMATCH: kitsu gagal diambil ("+e.message+")")]}}
