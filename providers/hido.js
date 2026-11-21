@@ -167,32 +167,57 @@ function KIT_QUERY(t) { return String(t || "").replace(/\b(\d+)(?:st|nd|rd|th)\s
 
 function KIT_KEY(x) { return String(x || "").replace(/\s+/g, ""); }
 
+// Pencocokan judul dua arah: kata entri harus ada di halaman, dan kata halaman harus ada di entri.
+// Ini mencegah "Naruto" cocok dengan "Boruto: Naruto Next Generations" atau "Naruto Shippuden".
+// Judul yang sama persis (abaikan spasi/tanda baca) selalu diterima.
 function KIT_PICK(results, titles) {
-    const entry = titles.map(KIT_SEASON).find(x => x != null) || 1;
+    const entrySeason = titles.map(KIT_SEASON).find(x => x != null) || 1;
     const bases = [...new Set(titles.map(KIT_BASE).filter(Boolean))];
     let best = null;
     for (const r of results) {
         const ps = KIT_SEASON(r.title);
-        if (!(ps === entry || (ps == null && entry === 1)))
-            continue;
+        if (!(ps === entrySeason || (ps == null && entrySeason === 1))) continue;
         const rb = KIT_BASE(r.title);
-        if (!rb)
-            continue;
-        const rt = new Set(rb.split(" "));
+        if (!rb) continue;
+        const rKey = KIT_KEY(rb);
+        const rWords = rb.split(" ");
+        const rSet = new Set(rWords);
         for (const b of bases) {
-            const bt = b.split(" ");
-            const ratio = bt.filter(w => rt.has(w)).length / bt.length;
-            const same = KIT_KEY(b) === KIT_KEY(rb);
-            if (!same && ratio < 0.8)
-                continue;
-            const sc = (same ? 2 : ratio) + (rb === b ? 1 : 0);
-            if (!best || sc > best.sc)
-                best = { item: r, sc };
+            let score;
+            if (KIT_KEY(b) === rKey) {
+                score = 3;
+            } else {
+                const bWords = b.split(" ");
+                const bSet = new Set(bWords);
+                const entryInPage = bWords.filter(w => rSet.has(w)).length / bWords.length;
+                const pageInEntry = rWords.filter(w => bSet.has(w)).length / rWords.length;
+                if (entryInPage < 0.8 || pageInEntry < 0.8) continue;
+                score = Math.min(entryInPage, pageInEntry);
+            }
+            if (!best || score > best.score) best = { item: r, score };
         }
     }
     return best ? best.item : null;
 }
-
+// Judul di situs kadang berbeda total dari judul Kitsu (contoh: Naruto di Kitsu = "Naruto Kecil" di situs).
+// Isi di sini: { "<kitsuId>": "<judul persis di situs>" }. Judul ini dicoba sebagai judul utama.
+const KIT_OVERRIDE = {};
+const KIT_WORKER = "https://kuroproxy.anjvsmara.workers.dev";
+async function KIT_TITLES(kitId) {
+    const at = JSON.parse(await s("https://kitsu.io/api/edge/anime/" + kitId)).data.attributes || {};
+    const names = at.titles || {};
+    const cand = [names.en_jp, at.canonicalTitle, names.en].concat(at.abbreviatedTitles || [])
+        .filter(x => x && !/[\u3040-\u30ff\u4e00-\u9fff]/.test(x));
+    const titles = [...new Set(cand)];
+    if (KIT_OVERRIDE[kitId]) titles.unshift(KIT_OVERRIDE[kitId]);
+    return [...new Set(titles)];
+}
+async function KIT_SEARCH(titles) {
+    const queries = [...new Set(titles.flatMap(x => [x, KIT_QUERY(x)]))].slice(0, 4);
+    const parts = await Promise.all(queries.map(q => w(q)));
+    const seen = new Set();
+    return [].concat(...parts).filter(x => !seen.has(x.url) && seen.add(x.url));
+}
 function KIT_DEBUG(results, titles) {
     const entrySeason = titles.map(KIT_SEASON).find(x => x != null) || 1;
     const keys = [...new Set(titles.map(KIT_BASE).filter(Boolean).map(KIT_KEY))];
@@ -201,45 +226,61 @@ function KIT_DEBUG(results, titles) {
         const key = KIT_KEY(KIT_BASE(r.title));
         return r.title.slice(0, 30) + "{s=" + ps + ",k=" + key + "}";
     });
-    return " | entri: season=" + entrySeason + " kunci=[" + keys.join(",") + "] | kandidat: " + cands.join(" ");
+    return " judul=[" + titles.slice(0, 2).join(" | ") + "] hasil=" + results.length + " | entri: season=" + entrySeason + " kunci=[" + keys.join(",") + "] | kandidat: " + cands.join(" ");
 }
 async function KITH(raw, epParam) {
     try {
         const mm = String(raw).match(/^kitsu:(\d+)(?::(\d+))?/i);
         const ep = mm[2] ? Number(mm[2]) : (epParam == null ? null : Number(epParam));
-        if (!ep)
-            return [r("[v14] NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
-        const at = JSON.parse(await s("https://kitsu.io/api/edge/anime/" + mm[1])).data.attributes || {};
-        const t = at.titles || {};
-        const cand = [t.en_jp, at.canonicalTitle, t.en].concat(at.abbreviatedTitles || []).filter(x => x && !/[\u3040-\u30ff\u4e00-\u9fff]/.test(x));
-        const titles = [...new Set(cand)];
-        const qs = [...new Set(titles.flatMap(x => [x, KIT_QUERY(x)]))].slice(0, 4);
-        let res = [];
-        const parts = await Promise.all(qs.map(q => w(q)));
-        res = [].concat(...parts);
-        const seen = new Set();
-        res = res.filter(x => !seen.has(x.url) && seen.add(x.url));
+        if (!ep) return [r("[v15] NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
+        const titles = await KIT_TITLES(mm[1]);
+        const res = await KIT_SEARCH(titles);
         const pick = KIT_PICK(res, titles);
-        if (!pick)
-            return [r("[v14] NOMATCH: kitsu:" + mm[1] + " judul=[" + titles.slice(0, 2).join(" | ") + "] query=[" + qs.slice(0, 2).join(" | ") + "] hasil=" + res.length + (res.length ? " -> " + res.slice(0, 3).map(x => x.title.slice(0, 45)).join(" | ") : "") + KIT_DEBUG(res, titles))];
+        if (!pick) return [r("[v15] NOMATCH: kitsu:" + mm[1] + KIT_DEBUG(res, titles))];
         const eps = await S(pick.url);
         const hit = eps.find(x => x.episodeNum === ep);
-        if (!hit)
-            return [r("[v14] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
+        if (!hit) return [r("[v15] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
         const st = await $(hit.url);
-        return st.length ? st : [r("[v14] NOSTREAM: " + hit.url)];
-    }
-    catch (e) {
-        return [r("[v14] NOMATCH: kitsu gagal diambil (" + e.message + ")")];
+        return st.length ? st : [r("[v15] NOSTREAM: " + hit.url)];
+    } catch (e) {
+        return [r("[v15] NOMATCH: kitsu gagal diambil (" + e.message + ")")];
     }
 }
-
-// --- Entry point Nuvio ---
+// Film: judul diambil dari Kitsu (kitsu:ID) atau dari TMDB (ID angka, atau tt... lewat /3/find).
+// Episode pertama halaman film dipakai; kalau halaman tidak punya daftar episode, halaman itu sendiri.
+async function KITH_MOVIE(raw) {
+    try {
+        const kit = String(raw).match(/^kitsu:(\d+)/i);
+        let titles;
+        if (kit) {
+            titles = await KIT_TITLES(kit[1]);
+        } else {
+            let tmdbId = String(raw).trim();
+            if (/^tt\d+$/i.test(tmdbId)) {
+                const found = JSON.parse(await s(KIT_WORKER + "/tmdb?path=" + encodeURIComponent("/3/find/" + tmdbId + "?external_source=imdb_id")));
+                const hit = (found.movie_results || [])[0];
+                if (!hit) return [r("[v15] NOMATCH: " + tmdbId + " tidak ditemukan sebagai film di TMDB")];
+                tmdbId = String(hit.id);
+            }
+            const md = JSON.parse(await s(KIT_WORKER + "/tmdb?path=" + encodeURIComponent("/3/movie/" + tmdbId)));
+            titles = [...new Set([md.title, md.original_title].filter(x => x && !/[\u3040-\u30ff\u4e00-\u9fff]/.test(x)))];
+        }
+        const res = await KIT_SEARCH(titles);
+        const pick = KIT_PICK(res, titles);
+        if (!pick) return [r("[v15] NOMATCH: film " + String(raw) + KIT_DEBUG(res, titles))];
+        const eps = await S(pick.url);
+        const st = await $(eps.length ? eps[0].url : pick.url);
+        return st.length ? st : [r("[v15] NOSTREAM: film " + pick.url)];
+    } catch (e) {
+        return [r("[v15] NOMATCH: film gagal diambil (" + e.message + ")")];
+    }
+}
 async function _(id, type, season, episode) {
-  if (!/^kitsu:/i.test(String(id))) {
-    return [r("[v14] NOMATCH: ID " + id + " bukan kitsu. Skrip ini hanya membaca ID kitsu")];
-  }
-  return await KITH(id, episode);
+    if (String(type) === "movie") return await KITH_MOVIE(id);
+    if (!/^kitsu:/i.test(String(id))) {
+        return [r("[v15] NOMATCH: ID " + id + " bukan kitsu. Untuk serial hanya ID kitsu yang didukung")];
+    }
+    return await KITH(id, episode);
 }
 
 "undefined" != typeof module && module.exports
