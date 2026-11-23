@@ -70,11 +70,14 @@ async function b(t) {
 
     const task = (async () => {
         const { html } = await g("/?s=" + encodeURIComponent(t));
-        const start = html.search(/class="[^"]*(?:listupd|postbody|result|main-content)[^"]*"/i);
+        // Utamakan container kartu hasil, bukan wrapper induk .postbody.
+        const listStart = html.search(/class=["'][^"']*\blistupd\b[^"']*["']/i);
+        const fallbackStart = html.search(/class=["'][^"']*(?:postbody|result|main-content)[^"']*["']/i);
+        const start = listStart >= 0 ? listStart : fallbackStart;
         let area = html;
         if (start >= 0) {
             const tail = html.slice(start);
-            const stop = tail.search(/class="[^"]*(?:sidebar|widgets)[^"]*"/i);
+            const stop = tail.search(/class=["'][^"']*(?:sidebar|widgets)[^"']*["']/i);
             area = stop > 0 ? tail.slice(0, stop) : tail.slice(0, 50000);
         }
 
@@ -286,20 +289,59 @@ async function KIT_TITLES(kitId) {
         .filter(x => x && !/[\u3040-\u30ff\u4e00-\u9fff]/.test(x));
     return [...new Set(cand)];
 }
-async function KIT_SEARCH(titles){
- const queries=[],keys=new Set();
- const add=value=>{
-  const q=String(value||"").trim(),key=q.toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
-  if(q&&key&&!keys.has(key)&&queries.length<2){keys.add(key);queries.push(q);}
- };
- for(const title of titles){add(title);add(KIT_QUERY(title));if(queries.length>=2)break;}
- const results=[],seen=new Set(),requestState={ambig:null,bestScore:0},showCache=new Map();
- const batches=await Promise.all(queries.map(query=>w(query)));
- for(const found of batches){
-  for(const item of found)if(item.url&&!seen.has(item.url)){seen.add(item.url);results.push(item);}
- }
- const pick=KIT_PICK(results,titles,requestState);
- return {results,pick,ambig:requestState.ambig,showCache};
+function KIT_SHORT_QUERY(title) {
+    const raw = String(title || "").trim();
+    if (!raw) return "";
+    const colon = raw.indexOf(":");
+    if (colon > 0) {
+        const head = raw.slice(0, colon).trim();
+        if (head.split(/\s+/).length >= 4) return head;
+    }
+    const words = raw.split(/\s+/).filter(Boolean);
+    if (words.length >= 9) {
+        const prefix = words.slice(0, 7).join(" ");
+        const season = KIT_SEASON(raw);
+        return season != null && KIT_SEASON(prefix) == null ? prefix + " Season " + season : prefix;
+    }
+    return "";
+}
+async function KIT_SEARCH(titles) {
+    const showCache = new Map(), results = [], seenUrl = new Set();
+    const requestState = { ambig: null, bestScore: 0 };
+    const merge = batches => {
+        for (const found of batches) for (const item of found || []) {
+            if (item.url && !seenUrl.has(item.url)) { seenUrl.add(item.url); results.push(item); }
+        }
+    };
+    const runQueries = async queries => {
+        const unique = [], seen = new Set();
+        for (const value of queries) {
+            const q = String(value || "").trim();
+            const key = q.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+            if (q && key && !seen.has(key)) { seen.add(key); unique.push(q); }
+            if (unique.length >= 4) break;
+        }
+        if (!unique.length) return null;
+        merge(await Promise.all(unique.map(query => w(query))));
+        const pick = KIT_PICK(results, titles, requestState);
+        return requestState.ambig || (pick && requestState.bestScore >= 0.999)
+            ? { results, pick, ambig: requestState.ambig, showCache } : null;
+    };
+    // Cari semua nama Kitsu asli sebelum mencoba query yang diubah.
+    let found = await runQueries(titles.slice(0, 4));
+    if (found) return found;
+    // Query pendek hanya menjadi fallback; tidak menggantikan judul lengkap.
+    const fallback = [];
+    for (const title of titles) {
+        const normalized = KIT_QUERY(title);
+        if (normalized && normalized !== title) fallback.push(normalized);
+        const shortened = KIT_SHORT_QUERY(title);
+        if (shortened) fallback.push(shortened);
+    }
+    found = await runQueries(fallback);
+    if (found) return found;
+    const pick = KIT_PICK(results, titles, requestState);
+    return { results, pick, ambig: requestState.ambig, showCache };
 }
 function KIT_DEBUG(results, titles) {
     const entrySeason = titles.map(KIT_SEASON).find(x => x != null) || 1;
