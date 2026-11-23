@@ -63,32 +63,36 @@ async function g(path) {
     return { html, url };
 }
 
-let y = new Map;
-
-async function b(t) { if (y.has(t))
-    return y.get(t); const e = async function (t) { const e = encodeURIComponent(t), { html: n } = await g(`/?s=${e}`); let i = ""; const r = n.search(/class="[^"]*(?:listupd|postbody|result|main-content)[^"]*"/i); if (r >= 0) {
-    const t = n.slice(r), e = t.search(/class="[^"]*(?:sidebar|widgets)[^"]*"/i);
-    i = e > 0 ? t.slice(0, e) : t.slice(0, 3e4);
+const y = new Map();
+async function b(t) {
+ const key=String(t||"").toLowerCase().replace(/\s+/g," ").trim();
+ if(y.has(key)) return y.get(key);
+ const task=(async()=>{
+  const {html}=await g(`/?s=${encodeURIComponent(t)}`);
+  const start=html.search(/class="[^"]*(?:listupd|postbody|result|main-content)[^"]*"/i);
+  let area=html;
+  if(start>=0){const tail=html.slice(start);const stop=tail.search(/class="[^"]*(?:sidebar|widgets)[^"]*"/i);area=stop>0?tail.slice(0,stop):tail.slice(0,30000);}
+  const out=[],re=/<article\b[^>]*>([\s\S]*?)<\/article>/gi;let m;
+  while((m=re.exec(area))){
+   const article=m[1],link=p(article).find(aTag=>{const href=l(aTag.tag,"href")||"";return href.includes("/anime/")||href.includes("/series/");});
+   if(!link)continue;
+   const href=l(link.tag,"href");
+   const heading=article.match(/<h[23][^>]*>([\s\S]*?)<\/h[23]>/i)||article.match(/<div[^>]*class="[^"]*\btt\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+   const title=u(a(heading?heading[1]:l(link.tag,"title")||a(link.inner)));
+   if(title&&href)out.push({title,url:href});
+  }
+  const seen=new Set();return out.filter(item=>item.url&&!seen.has(item.url)&&seen.add(item.url));
+ })();
+ y.set(key,task);if(y.size>40)y.delete(y.keys().next().value);
+ try{return await task;}catch(err){y.delete(key);throw err;}
 }
-else
-    i = n; const s = [], o = /<article\b[^>]*>([\s\S]*?)<\/article>/gi; let c; for (; null !== (c = o.exec(i));) {
-    const t = c[1], e = p(t).find(t => { const e = l(t.tag, "href") || ""; return e.indexOf("/anime/") >= 0 || e.indexOf("/series/") >= 0; });
-    if (!e)
-        continue;
-    const n = l(e.tag, "href"), i = u(a((t.match(/<h[23][^>]*>([\s\S]*?)<\/h[23]>/i) || t.match(/<div[^>]*class="[^"]*\btt\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i) || [])[0]) || l(e.tag, "title") || a(e.inner));
-    i && n && s.push({ title: i, url: n });
-} const f = new Set; return s.filter(t => !f.has(t.url) && (f.add(t.url), !0)); }(t); y.set(t, e); try {
-    return await e;
-}
-catch (e) {
-    throw y.delete(t), e;
-} }
 
-async function w(t) { const e = function (t) { return String(t || "").replace(/×/g, "x").replace(/\(\s*\d{4}\s*\)/g, " ").replace(/[:.~!?'"’‘“”`\-–—]/g, " ").replace(/\s+/g, " ").trim(); }(t); if (!e || /[\u3040-\u30ff\u4e00-\u9fff]/.test(e))
-    return []; let n = await b(e); if (0 === n.length) {
-    const t = e.split(" ").filter(t => t.length > 0);
-    t.length > 3 && (n = await b(t.slice(0, 3).join(" ")));
-} return n; }
+async function w(t) {
+ const q=String(t||"").replace(/×/g,"x").replace(/\(\s*\d{4}\s*\)/g," ").replace(/[:.~!?'"’‘“”`\-–—]/g," ").replace(/\s+/g," ").trim();
+ if(!q||/[\u3040-\u30ff\u4e00-\u9fff]/.test(q))return [];
+ // Tidak memperlebar pencarian otomatis dengan tiga kata pertama.
+ return b(q);
+}
 
 async function S(t, showCache) { const e = (showCache && showCache.get(t)) || (await g(t)).html; let n = ""; const i = e.search(/class="[^"]*(?:eplister|bxcl|episodelist)[^"]*"/i); if (i >= 0) {
     const t = e.slice(i), r = t.search(/class="[^"]*(?:sidebar|widgets|footer|comment)[^"]*"/i);
@@ -181,60 +185,39 @@ function KIT_KEY(x) { return String(x || "").replace(/\s+/g, ""); }
 // Pencocokan judul dua arah: kata entri harus ada di halaman, dan kata halaman harus ada di entri.
 // Ini mencegah "Naruto" cocok dengan "Boruto: Naruto Next Generations" atau "Naruto Shippuden".
 // Judul yang sama persis (abaikan spasi/tanda baca) selalu diterima.
-function KIT_PICK(results, titles, requestState) {
-    const entrySeason = titles.map(KIT_SEASON).find(x => x != null) || 1;
-    const bases = [...new Set(titles.map(KIT_BASE).filter(Boolean))];
-    let best = null;
-    // Kandidat yang cocok penuh (exact, atau semua kata sama), dikelompokkan per judul dasar.
-    const full = new Map();
-    requestState.ambig = null;
-    requestState.bestScore = 0;
-    for (const r of results) {
-        const ps = KIT_SEASON(r.title);
-        if (!(ps === entrySeason || (ps == null && entrySeason === 1)))
-            continue;
-        const rb = KIT_BASE(r.title);
-        if (!rb)
-            continue;
-        const rKey = KIT_KEY(rb);
-        const rWords = rb.split(" ");
-        const rSet = new Set(rWords);
-        for (const b of bases) {
-            let score;
-            if (KIT_KEY(b) === rKey) {
-                score = 3;
-            }
-            else {
-                const bWords = b.split(" ");
-                const bSet = new Set(bWords);
-                const entryInPage = bWords.filter(w => rSet.has(w)).length / bWords.length;
-                const pageInEntry = rWords.filter(w => bSet.has(w)).length / rWords.length;
-                if (entryInPage < 0.8 || pageInEntry < 0.8)
-                    continue;
-                score = Math.min(entryInPage, pageInEntry);
-            }
-            if (score >= 0.999 && !full.has(rKey))
-                full.set(rKey, r);
-            if (!best || score > best.score)
-                best = { item: r, score };
-        }
-    }
-    // Dua pertunjukan berbeda sama-sama cocok penuh (misal dua cour dalam satu entri Kitsu):
-    // jangan menebak, laporkan sebagai ambigu.
-    if (full.size >= 2) {
-        requestState.ambig = [...full.values()];
-        return null;
-    }
-    if (best)
-        requestState.bestScore = best.score;
-    return best ? best.item : null;
+function KIT_PICK(results,titles,requestState){
+ const entrySeason=titles.map(KIT_SEASON).find(x=>x!=null)||1;
+ const bases=[...new Set(titles.map(KIT_BASE).filter(Boolean))];
+ const full=new Map();let best=null;
+ requestState.ambig=null;requestState.bestScore=0;
+ for(const item of results){
+  const ps=KIT_SEASON(item.title);
+  if(!(ps===entrySeason||(ps==null&&entrySeason===1)))continue;
+  const pageBase=KIT_BASE(item.title);if(!pageBase)continue;
+  const pageKey=KIT_KEY(pageBase),pageWords=[...new Set(pageBase.split(" ").filter(Boolean))],pageSet=new Set(pageWords);
+  for(const base of bases){
+   const baseKey=KIT_KEY(base),baseWords=[...new Set(base.split(" ").filter(Boolean))];
+   let score=0;
+   if(baseKey===pageKey)score=1;
+   else{
+    if(baseWords.length<2||pageWords.length<2)continue;
+    const baseSet=new Set(baseWords);
+    const a=baseWords.filter(w=>pageSet.has(w)).length/baseWords.length;
+    const b=pageWords.filter(w=>baseSet.has(w)).length/pageWords.length;
+    if(a<0.9||b<0.9)continue;
+    score=Math.min(a,b);
+   }
+   if(score===1&&!full.has(pageKey))full.set(pageKey,item);
+   if(!best||score>best.score)best={item,score};
+  }
+ }
+ if(full.size>1){requestState.ambig=[...full.values()];return null;}
+ if(best)requestState.bestScore=best.score;
+ return best&&best.score>=0.9?best.item:null;
 }
 
 const KIT_OVERRIDE = {
     "11": "Naruto Kecil",
-    // Judul halaman di situs (Kuronime): "Bleach: Sennen Kessen-hen Final Part Sub Indo".
-    // Tebakan lama "... - The Calamity" tidak ada di situs, makanya selalu NOMATCH.
-    "49444": "Bleach: Sennen Kessen-hen Final Part",
 };
 async function KIT_TITLES(kitId) {
     if (KIT_OVERRIDE[kitId])
@@ -245,40 +228,20 @@ async function KIT_TITLES(kitId) {
         .filter(x => x && !/[\u3040-\u30ff\u4e00-\u9fff]/.test(x));
     return [...new Set(cand)];
 }
-async function KIT_SEARCH(titles) {
-    // Cari judul utama dahulu; alternatif dicoba berurutan hanya jika belum cocok.
-    const seen = new Set();
-    const queries = [];
-    for (const title of titles) {
-        for (const q of [title, KIT_QUERY(title)]) {
-            const key = q.toLowerCase().replace(/\s+/g, " ").trim();
-            if (key && !seen.has(key)) {
-                seen.add(key);
-                queries.push(q);
-            }
-        }
-    }
-
-    const allResults = [];
-    const seenUrl = new Set();
-    const requestState = { ambig: null };
-    const showCache = new Map();
-
-    // Strategi limited: batasi pencarian ke dua judul/query paling relevan.
-    for (const query of queries.slice(0, 2)) {
-        const found = await w(query);
-        for (const item of found) {
-            if (!seenUrl.has(item.url)) {
-                seenUrl.add(item.url);
-                allResults.push(item);
-            }
-        }
-        const pick = KIT_PICK(allResults, titles, requestState);
-        if ((pick && requestState.bestScore >= 0.999) || requestState.ambig)
-            return { results: allResults, pick, ambig: requestState.ambig, showCache };
-    }
-    const finalPick = KIT_PICK(allResults, titles, requestState);
-    return { results: allResults, pick: finalPick, ambig: requestState.ambig, showCache };
+async function KIT_SEARCH(titles){
+ const queries=[],keys=new Set();
+ const add=value=>{
+  const q=String(value||"").trim(),key=q.toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+  if(q&&key&&!keys.has(key)&&queries.length<2){keys.add(key);queries.push(q);}
+ };
+ for(const title of titles){add(title);add(KIT_QUERY(title));if(queries.length>=2)break;}
+ const results=[],seen=new Set(),requestState={ambig:null,bestScore:0},showCache=new Map();
+ for(const query of queries){
+  const found=await w(query);
+  for(const item of found)if(item.url&&!seen.has(item.url)){seen.add(item.url);results.push(item);}
+ }
+ const pick=KIT_PICK(results,titles,requestState);
+ return {results,pick,ambig:requestState.ambig,showCache};
 }
 function KIT_DEBUG(results, titles) {
     const entrySeason = titles.map(KIT_SEASON).find(x => x != null) || 1;
@@ -344,11 +307,11 @@ async function KIT(raw, epParam) {
         const res = search.results;
         let pick = search.pick;
         if (!pick && search.ambig)
-            return [r("[v16] NOMATCH: kitsu:" + mm[1] + " ambigu, sama-sama cocok persis: " + search.ambig.map(x => x.title.slice(0, 40)).join(" | ") + ". Isi KIT_OVERRIDE")];
+            return [r("[v16] NOMATCH: kitsu:" + mm[1] + " ambigu, sama-sama cocok persis: " + search.ambig.map(x => x.title.slice(0, 40)).join(" | ") + ". Periksa judul alternatif Kitsu")];
         if (!pick) {
             const verified = await KIT_VERIFY(res, titles, search.showCache);
             if (verified && verified.ambiguous)
-                return [r("[v16] NOMATCH: kitsu:" + mm[1] + " ambigu setelah verifikasi: " + verified.ambiguous.map(x => x.title.slice(0, 40)).join(" | ") + ". Isi KIT_OVERRIDE")];
+                return [r("[v16] NOMATCH: kitsu:" + mm[1] + " ambigu setelah verifikasi: " + verified.ambiguous.map(x => x.title.slice(0, 40)).join(" | ") + ". Periksa judul alternatif Kitsu")];
             pick = verified && verified.item;
         }
         if (!pick)
