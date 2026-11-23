@@ -166,29 +166,29 @@ function KIT_SEASON(t) {
     const numeric = value.match(KIT_SEA);
     if (numeric)
         return Number(numeric[1] || numeric[2] || numeric[3]);
-    const roman = value.match(/\\b(II|III|IV|V)\\s*$/i);
+    const roman = value.match(/\b(II|III|IV|V)\s*$/i);
     if (!roman)
         return null;
     return ({ II: 2, III: 3, IV: 4, V: 5 })[roman[1].toUpperCase()];
 }
 function KIT_BASE(t) {
     return String(t || "")
-        .replace(/\\(\\s*\\d{4}\\s*\\)/g, " ")
-        .replace(/thousand[\\s-]*year[\\s-]*blood[\\s-]*war/gi, " sennen kessen hen ")
-        .replace(/\\b\\d+(?:st|nd|rd|th)\\s+season\\b|\\bseason\\s*\\d+\\b|\\bpart\\s*\\d+\\b|subtitle\\s*indonesia|sub\\s*indo/gi, " ")
-        .replace(/\\s+\\b(?:II|III|IV|V)\\s*$/i, " ")
-        .replace(/第\\s*\\d+\\s*期/g, " ")
-        .replace(/[:.~!?'"’‘“”`\\-–—,]/g, " ")
-        .replace(/\\s+/g, " ")
+        .replace(/\(\s*\d{4}\s*\)/g, " ")
+        .replace(/thousand[\s-]*year[\s-]*blood[\s-]*war/gi, " sennen kessen hen ")
+        .replace(/\b\d+(?:st|nd|rd|th)\s+season\b|\bseason\s*\d+\b|\bpart\s*\d+\b|subtitle\s*indonesia|sub\s*indo/gi, " ")
+        .replace(/\s+\b(?:II|III|IV|V)\s*$/i, " ")
+        .replace(/第\s*\d+\s*期/g, " ")
+        .replace(/[:.~!?'"’‘“”\`\-–—,]/g, " ")
+        .replace(/\s+/g, " ")
         .toLowerCase()
         .trim();
 }
 function KIT_QUERY(t) {
     // Normalisasi format season ordinal dan angka Romawi ke format pencarian situs.
     return String(t || "")
-        .replace(/\\b(\\d+)(?:st|nd|rd|th)\\s+season\\b/gi, "Season $1")
-        .replace(/\\b(II|III|IV|V)\\s*$/i, (_, roman) => "Season " + ({ II: 2, III: 3, IV: 4, V: 5 })[roman.toUpperCase()])
-        .replace(/thousand[\\s-]*year[\\s-]*blood[\\s-]*war/gi, "Sennen Kessen-hen");
+        .replace(/\b(\d+)(?:st|nd|rd|th)\s+season\b/gi, "Season $1")
+        .replace(/\b(II|III|IV|V)\s*$/i, (_, roman) => "Season " + ({ II: 2, III: 3, IV: 4, V: 5 })[roman.toUpperCase()])
+        .replace(/thousand[\s-]*year[\s-]*blood[\s-]*war/gi, "Sennen Kessen-hen");
 }
 function KIT_KEY(x) { return String(x || "").replace(/\s+/g, ""); }
 // Pencocokan judul dua arah: kata entri harus ada di halaman, dan kata halaman harus ada di entri.
