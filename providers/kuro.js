@@ -188,7 +188,7 @@ async function PR(t) {
     return r.filter(t => !s.has(t.url) && (s.add(t.url), !0));
 }
 async function _(t) {
-    const n = await m(t, { headers: { Referer: e } }), r = n.search(/class="[^"]*bixbox[^"]*bxcl/), i = r >= 0 ? n.slice(r) : n, a = [], s = /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
+    const n = KIT_SHOW_CACHE.get(t) || await m(t, { headers: { Referer: e } }), r = n.search(/class="[^"]*bixbox[^"]*bxcl/), i = r >= 0 ? n.slice(r) : n, a = [], s = /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
     let o;
     for (; null !== (o = s.exec(i));) {
         const t = A(o[1]).find(t => (f(t.tag, "href") || "").indexOf("/nonton-") >= 0);
@@ -365,37 +365,90 @@ function KIT_DEBUG(results, titles) {
     return " judul=[" + titles.slice(0, 2).map(x => x.slice(0, 40)).join(" | ") + "] hasil=" + results.length
         + " | entri: s=" + entrySeason + " k=" + key + " | kandidat: " + cands.join(" ");
 }
+// Cache halaman anime per pemanggilan KIT (dipakai ulang oleh _ agar tidak diambil dua kali).
+let KIT_SHOW_CACHE = new Map();
+// Ambil daftar "Judul:" (judul alternatif, termasuk Inggris) dari halaman anime Kuronime.
+function KIT_ALT_TEXT(html) {
+    const text = String(html || "")
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ");
+    const hit = text.match(/\bJudul\s*:/i);
+    if (!hit)
+        return "";
+    const rest = text.slice(hit.index + hit[0].length);
+    const stop = rest.search(/\b(?:Genre|Status|Studio|Tayang|Season|Tipe|Durasi|Released|Updated)\s*:/i);
+    return KIT_KEY(KIT_BASE(stop < 0 ? rest.slice(0, 400) : rest.slice(0, stop)));
+}
+function KIT_ENTRY_SEASON(titles) {
+    return titles.map(KIT_SEASON).find(x => x != null) || 1;
+}
+// Dipakai hanya jika pencocokan judul utama gagal: buka maksimal 2 kandidat yang season-nya cocok,
+// lalu cek apakah daftar "Judul:" halamannya memuat judul Kitsu (termasuk judul Inggris).
+async function KIT_VERIFY(results, titles) {
+    const entrySeason = KIT_ENTRY_SEASON(titles);
+    const want = [...new Set(titles.map(t => KIT_KEY(KIT_BASE(t))).filter(k => k.length >= 8))];
+    if (!want.length)
+        return null;
+    const cands = results.filter(r => {
+        const ps = KIT_SEASON(r.title);
+        return ps === entrySeason || (ps == null && entrySeason === 1);
+    }).slice(0, 2);
+    const hits = [];
+    for (const r of cands) {
+        let html;
+        try {
+            html = await m(r.url, { headers: { Referer: e } });
+        }
+        catch (err) {
+            continue;
+        }
+        KIT_SHOW_CACHE.set(r.url, html);
+        const alt = KIT_ALT_TEXT(html);
+        if (want.some(k => alt.includes(k)))
+            hits.push(r);
+    }
+    if (hits.length > 1) {
+        KIT_AMBIG = hits;
+        return null;
+    }
+    return hits.length === 1 ? hits[0] : null;
+}
 async function KIT(raw, epParam) {
     try {
         const mm = String(raw).match(/^kitsu:(\d+)(?::(\d+))?/i);
         const ep = mm[2] ? Number(mm[2]) : (epParam == null ? null : Number(epParam));
         if (!ep)
-            return [O("[v27] NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
+            return [O("[v28] NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
         const titles = await KIT_TITLES(mm[1]);
+        KIT_SHOW_CACHE = new Map();
         const res = await KIT_SEARCH(titles);
-        const pick = KIT_PICK(res, titles);
+        let pick = KIT_PICK(res, titles);
+        if (!pick && !KIT_AMBIG)
+            pick = await KIT_VERIFY(res, titles);
         if (!pick) {
             if (KIT_AMBIG)
-                return [O("[v27] NOMATCH: kitsu:" + mm[1] + " ambigu, sama-sama cocok persis: " + KIT_AMBIG.map(x => x.title.slice(0, 40)).join(" | ") + ". Isi KIT_OVERRIDE")];
-            return [O("[v27] NOMATCH: kitsu:" + mm[1] + KIT_DEBUG(res, titles))];
+                return [O("[v28] NOMATCH: kitsu:" + mm[1] + " ambigu, sama-sama cocok persis: " + KIT_AMBIG.map(x => x.title.slice(0, 40)).join(" | ") + ". Isi KIT_OVERRIDE")];
+            return [O("[v28] NOMATCH: kitsu:" + mm[1] + KIT_DEBUG(res, titles))];
         }
         const eps = await _(pick.url);
         const hit = eps.find(x => x.episodeNum === ep);
         if (!hit)
-            return [O("[v27] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
+            return [O("[v28] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
         const st = await $(hit.url);
-        return st.length ? st : [O("[v27] NOSTREAM: " + hit.url)];
+        return st.length ? st : [O("[v28] NOSTREAM: " + hit.url)];
     }
     catch (e) {
-        return [O("[v27] NOMATCH: kitsu gagal diambil (" + e.message + ")")];
+        return [O("[v28] NOMATCH: kitsu gagal diambil (" + e.message + ")")];
     }
 }
 async function X(id, type, season, episode) {
     if (String(type) === "movie") {
-        return [O("[v27] NOMATCH: film belum didukung. Skrip ini hanya untuk serial kitsu")];
+        return [O("[v28] NOMATCH: film belum didukung. Skrip ini hanya untuk serial kitsu")];
     }
     if (!/^kitsu:/i.test(String(id))) {
-        return [O("[v27] NOMATCH: ID " + id + " bukan kitsu. Hanya ID kitsu yang didukung")];
+        return [O("[v28] NOMATCH: ID " + id + " bukan kitsu. Hanya ID kitsu yang didukung")];
     }
     return await KIT(id, episode);
 }
