@@ -264,7 +264,8 @@ async function KIT_SEARCH(titles) {
     const requestState = { ambig: null };
     const showCache = new Map();
 
-    for (const query of queries.slice(0, 4)) {
+    // Strategi limited: batasi pencarian ke dua judul/query paling relevan.
+    for (const query of queries.slice(0, 2)) {
         const found = await w(query);
         for (const item of found) {
             if (!seenUrl.has(item.url)) {
@@ -314,20 +315,20 @@ async function KIT_VERIFY(results, titles, showCache) {
         const ps = KIT_SEASON(r.title);
         return ps === entrySeason || (ps == null && entrySeason === 1);
     }).slice(0, 2);
-    const hits = [];
-    for (const r of cands) {
-        let html;
+    // Verifikasi maksimal dua kandidat secara paralel agar fallback tidak menambah
+    // waktu tunggu berurutan. Hasil HTML tetap disimpan untuk dipakai ulang oleh S().
+    const checked = await Promise.all(cands.map(async r => {
         try {
-            html = (await g(r.url)).html;
+            const html = (await g(r.url)).html;
+            showCache.set(r.url, html);
+            const alt = KIT_ALT_TEXT(html);
+            return want.some(k => alt.includes(k)) ? r : null;
         }
         catch (err) {
-            continue;
+            return null;
         }
-        showCache.set(r.url, html);
-        const alt = KIT_ALT_TEXT(html);
-        if (want.some(k => alt.includes(k)))
-            hits.push(r);
-    }
+    }));
+    const hits = checked.filter(Boolean);
     if (hits.length > 1)
         return { ambiguous: hits };
     return hits.length === 1 ? { item: hits[0] } : null;
