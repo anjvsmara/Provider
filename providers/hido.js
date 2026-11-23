@@ -65,23 +65,50 @@ async function g(path) {
 
 const y = new Map();
 async function b(t) {
- const key=String(t||"").toLowerCase().replace(/\s+/g," ").trim();
+ const key=String(t||"").toLowerCase().replace(/\\s+/g," ").trim();
  if(y.has(key)) return y.get(key);
  const task=(async()=>{
   const {html}=await g(`/?s=${encodeURIComponent(t)}`);
   const start=html.search(/class="[^"]*(?:listupd|postbody|result|main-content)[^"]*"/i);
   let area=html;
-  if(start>=0){const tail=html.slice(start);const stop=tail.search(/class="[^"]*(?:sidebar|widgets)[^"]*"/i);area=stop>0?tail.slice(0,stop):tail.slice(0,30000);}
-  const out=[],re=/<article\b[^>]*>([\s\S]*?)<\/article>/gi;let m;
-  while((m=re.exec(area))){
-   const article=m[1],link=p(article).find(aTag=>{const href=l(aTag.tag,"href")||"";return href.includes("/anime/")||href.includes("/series/");});
-   if(!link)continue;
-   const href=l(link.tag,"href");
-   const heading=article.match(/<h[23][^>]*>([\s\S]*?)<\/h[23]>/i)||article.match(/<div[^>]*class="[^"]*\btt\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-   const title=u(a(heading?heading[1]:l(link.tag,"title")||a(link.inner)));
-   if(title&&href)out.push({title,url:href});
+  if(start>=0){const tail=html.slice(start);const stop=tail.search(/class="[^"]*(?:sidebar|widgets)[^"]*"/i);area=stop>0?tail.slice(0,stop):tail.slice(0,50000);}
+  const out=[],seen=new Set();
+  const add=(href,title)=>{
+   if(!href||!/(?:\\/anime\\/|\\/series\\/)/i.test(href))return;
+   let clean=href;
+   if(clean.startsWith("/"))clean=KIT_BASE_URL.replace(/\\/$/,"")+clean;
+   if(!/^https?:\\/\\//i.test(clean)||seen.has(clean))return;
+   let name=u(title||"");
+   if(!name){
+    let slug=clean.split(/[?#]/)[0].split("/").filter(Boolean).pop()||"";
+    try{slug=decodeURIComponent(slug);}catch(_){}
+    name=slug.replace(/[-_]+/g," ");
+   }
+   name=name.replace(/\\s+/g," ").trim();
+   if(name){seen.add(clean);out.push({title:name,url:clean});}
+  };
+  const articles=/<article\\b[^>]*>([\\s\\S]*?)<\\/article>/gi;let m;
+  while((m=articles.exec(area))){
+   const article=m[1];
+   for(const link of p(article)){
+    const href=l(link.tag,"href")||"";
+    if(!/(?:\\/anime\\/|\\/series\\/)/i.test(href))continue;
+    const imgAlt=(link.inner.match(/<img\\b[^>]*\\balt=["']([^"']+)["']/i)||[])[1];
+    const heading=article.match(/<h[23][^>]*>([\\s\\S]*?)<\\/h[23]>/i)||article.match(/<div[^>]*class="[^"]*\\btt\\b[^"]*"[^>]*>([\\s\\S]*?)<\\/div>/i);
+    add(href,l(link.tag,"title")||a(heading?heading[1]:"")||imgAlt||a(link.inner));
+   }
   }
-  const seen=new Set();return out.filter(item=>item.url&&!seen.has(item.url)&&seen.add(item.url));
+  // Tema situs dapat mengubah kartu hasil dari <article> menjadi elemen biasa.
+  // Fallback memindai tautan anime langsung dan mengambil title, alt gambar, teks, atau slug.
+  if(!out.length){
+   for(const link of p(area)){
+    const href=l(link.tag,"href")||"";
+    if(!/(?:\\/anime\\/|\\/series\\/)/i.test(href))continue;
+    const imgAlt=(link.inner.match(/<img\\b[^>]*\\balt=["']([^"']+)["']/i)||[])[1];
+    add(href,l(link.tag,"title")||imgAlt||a(link.inner));
+   }
+  }
+  return out;
  })();
  y.set(key,task);if(y.size>40)y.delete(y.keys().next().value);
  try{return await task;}catch(err){y.delete(key);throw err;}
@@ -195,13 +222,14 @@ function KIT_KEY(x) { return String(x || "").replace(/\s+/g, ""); }
 // Ini mencegah "Naruto" cocok dengan "Boruto: Naruto Next Generations" atau "Naruto Shippuden".
 // Judul yang sama persis (abaikan spasi/tanda baca) selalu diterima.
 function KIT_PICK(results,titles,requestState){
- const entrySeason=titles.map(KIT_SEASON).find(x=>x!=null)||1;
+ const entrySeason=titles.map(KIT_SEASON).find(x=>x!=null)??null;
  const bases=[...new Set(titles.map(KIT_BASE).filter(Boolean))];
  const full=new Map();let best=null;
  requestState.ambig=null;requestState.bestScore=0;
  for(const item of results){
   const ps=KIT_SEASON(item.title);
-  if(!(ps===entrySeason||(ps==null&&entrySeason===1)))continue;
+  // Jika judul Kitsu tidak menyebut musim, jangan menganggapnya otomatis Season 1.
+  if(entrySeason!=null&&!(ps===entrySeason||(ps==null&&entrySeason===1)))continue;
   const pageBase=KIT_BASE(item.title);if(!pageBase)continue;
   const pageKey=KIT_KEY(pageBase),pageWords=[...new Set(pageBase.split(" ").filter(Boolean))],pageSet=new Set(pageWords);
   for(const base of bases){
@@ -216,7 +244,7 @@ function KIT_PICK(results,titles,requestState){
     if(a<0.9||b<0.9)continue;
     score=Math.min(a,b);
    }
-   if(score===1&&!full.has(pageKey))full.set(pageKey,item);
+   if(score===1&&!full.has(item.url))full.set(item.url,item);
    if(!best||score>best.score)best={item,score};
   }
  }
@@ -274,7 +302,7 @@ function KIT_ALT_TEXT(html) {
     return KIT_KEY(KIT_BASE(stop < 0 ? rest.slice(0, 400) : rest.slice(0, stop)));
 }
 function KIT_ENTRY_SEASON(titles) {
-    return titles.map(KIT_SEASON).find(x => x != null) || 1;
+    return titles.map(KIT_SEASON).find(x => x != null) ?? null;
 }
 // Dipakai hanya jika pencocokan judul utama gagal: buka maksimal 2 kandidat yang season-nya cocok,
 // lalu cek apakah daftar "Judul:" halamannya memuat judul Kitsu (termasuk judul Inggris).
@@ -285,7 +313,7 @@ async function KIT_VERIFY(results, titles, showCache) {
         return null;
     const cands = results.filter(r => {
         const ps = KIT_SEASON(r.title);
-        return ps === entrySeason || (ps == null && entrySeason === 1);
+        return entrySeason == null || ps === entrySeason || (ps == null && entrySeason === 1);
     }).slice(0, 2);
     // Verifikasi maksimal dua kandidat secara paralel agar fallback tidak menambah
     // waktu tunggu berurutan. Hasil HTML tetap disimpan untuk dipakai ulang oleh S().
