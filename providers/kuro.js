@@ -327,7 +327,9 @@ function KIT_PICK(results, titles) {
 
 const KIT_OVERRIDE = {
     "11": "Naruto Kecil",
-    "49444": "Bleach: Sennen Kessen-hen Final Part - The Calamity",
+    // Judul halaman di situs (Kuronime): "Bleach: Sennen Kessen-hen Final Part Sub Indo".
+    // Tebakan lama "... - The Calamity" tidak ada di situs, makanya selalu NOMATCH.
+    "49444": "Bleach: Sennen Kessen-hen Final Part",
 };
 // Dipakai KIT_PICK untuk melaporkan kandidat yang sama-sama cocok persis (ambigu).
 let KIT_AMBIG = null;
@@ -368,32 +370,32 @@ async function KIT(raw, epParam) {
         const mm = String(raw).match(/^kitsu:(\d+)(?::(\d+))?/i);
         const ep = mm[2] ? Number(mm[2]) : (epParam == null ? null : Number(epParam));
         if (!ep)
-            return [O("[v26] NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
+            return [O("[v27] NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
         const titles = await KIT_TITLES(mm[1]);
         const res = await KIT_SEARCH(titles);
         const pick = KIT_PICK(res, titles);
         if (!pick) {
             if (KIT_AMBIG)
-                return [O("[v26] NOMATCH: kitsu:" + mm[1] + " ambigu, sama-sama cocok persis: " + KIT_AMBIG.map(x => x.title.slice(0, 40)).join(" | ") + ". Isi KIT_OVERRIDE")];
-            return [O("[v26] NOMATCH: kitsu:" + mm[1] + KIT_DEBUG(res, titles))];
+                return [O("[v27] NOMATCH: kitsu:" + mm[1] + " ambigu, sama-sama cocok persis: " + KIT_AMBIG.map(x => x.title.slice(0, 40)).join(" | ") + ". Isi KIT_OVERRIDE")];
+            return [O("[v27] NOMATCH: kitsu:" + mm[1] + KIT_DEBUG(res, titles))];
         }
         const eps = await _(pick.url);
         const hit = eps.find(x => x.episodeNum === ep);
         if (!hit)
-            return [O("[v26] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
+            return [O("[v27] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
         const st = await $(hit.url);
-        return st.length ? st : [O("[v26] NOSTREAM: " + hit.url)];
+        return st.length ? st : [O("[v27] NOSTREAM: " + hit.url)];
     }
     catch (e) {
-        return [O("[v26] NOMATCH: kitsu gagal diambil (" + e.message + ")")];
+        return [O("[v27] NOMATCH: kitsu gagal diambil (" + e.message + ")")];
     }
 }
 async function X(id, type, season, episode) {
     if (String(type) === "movie") {
-        return [O("[v26] NOMATCH: film belum didukung. Skrip ini hanya untuk serial kitsu")];
+        return [O("[v27] NOMATCH: film belum didukung. Skrip ini hanya untuk serial kitsu")];
     }
     if (!/^kitsu:/i.test(String(id))) {
-        return [O("[v26] NOMATCH: ID " + id + " bukan kitsu. Hanya ID kitsu yang didukung")];
+        return [O("[v27] NOMATCH: ID " + id + " bukan kitsu. Hanya ID kitsu yang didukung")];
     }
     return await KIT(id, episode);
 }
