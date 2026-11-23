@@ -256,8 +256,25 @@ async function $(t) {
 const q = { 30984: { 17: 50 } }, K = t + "/mapping";
 const KIT_SEA = /(?:\b(\d+)(?:st|nd|rd|th)\s+season\b)|(?:\bseason\s*(\d+)\b)|(?:第\s*(\d+)\s*期)/i;
 function KIT_SEASON(t) { const q = String(t || "").match(KIT_SEA); return q ? Number(q[1] || q[2] || q[3]) : null; }
-function KIT_BASE(t) { return String(t || "").replace(/\(\s*\d{4}\s*\)/g, " ").replace(/\b\d+(?:st|nd|rd|th)\s+season\b|\bseason\s*\d+\b|\bpart\s*\d+\b|subtitle\s*indonesia|sub\s*indo/gi, " ").replace(/第\s*\d+\s*期/g, " ").replace(/[:.~!?'"’‘“”`\-–—,]/g, " ").replace(/\s+/g, " ").toLowerCase().trim(); }
-function KIT_QUERY(t) { return String(t || "").replace(/\b(\d+)(?:st|nd|rd|th)\s+season\b/gi, "Season $1"); }
+function KIT_BASE(t) {
+    return String(t || "")
+        .replace(/\(\s*\d{4}\s*\)/g, " ")
+        // Situs memakai nama "Sennen Kessen-hen", Kitsu memakai "Thousand-Year Blood War".
+        .replace(/thousand[\s-]*year[\s-]*blood[\s-]*war/gi, " sennen kessen hen ")
+        .replace(/\b\d+(?:st|nd|rd|th)\s+season\b|\bseason\s*\d+\b|\bpart\s*\d+\b|subtitle\s*indonesia|sub\s*indo/gi, " ")
+        .replace(/第\s*\d+\s*期/g, " ")
+        .replace(/[:.~!?'"’‘“”`\-–—,]/g, " ")
+        .replace(/\s+/g, " ")
+        .toLowerCase()
+        .trim();
+}
+function KIT_QUERY(t) {
+    // Varian query untuk pencarian situs: "2nd Season" -> "Season 2", dan nama TYBW -> "Sennen Kessen-hen".
+    return String(t || "")
+        .replace(/\b(\d+)(?:st|nd|rd|th)\s+season\b/gi, "Season $1")
+        .replace(/thousand[\s-]*year[\s-]*blood[\s-]*war/gi, "Sennen Kessen-hen");
+}
+
 function KIT_KEY(x) { return String(x || "").replace(/\s+/g, ""); }
 // Pencocokan judul dua arah: kata entri harus ada di halaman, dan kata halaman harus ada di entri.
 // Ini mencegah "Naruto" cocok dengan "Boruto: Naruto Next Generations" atau "Naruto Shippuden".
@@ -266,6 +283,9 @@ function KIT_PICK(results, titles) {
     const entrySeason = titles.map(KIT_SEASON).find(x => x != null) || 1;
     const bases = [...new Set(titles.map(KIT_BASE).filter(Boolean))];
     let best = null;
+    // Kandidat yang cocok penuh (exact, atau semua kata sama), dikelompokkan per judul dasar.
+    const full = new Map();
+    KIT_AMBIG = null;
     for (const r of results) {
         const ps = KIT_SEASON(r.title);
         if (!(ps === entrySeason || (ps == null && entrySeason === 1)))
@@ -290,71 +310,90 @@ function KIT_PICK(results, titles) {
                     continue;
                 score = Math.min(entryInPage, pageInEntry);
             }
+            if (score >= 0.999 && !full.has(rKey))
+                full.set(rKey, r);
             if (!best || score > best.score)
                 best = { item: r, score };
         }
     }
+    // Dua pertunjukan berbeda sama-sama cocok penuh (misal dua cour dalam satu entri Kitsu):
+    // jangan menebak, laporkan sebagai ambigu.
+    if (full.size >= 2) {
+        KIT_AMBIG = [...full.values()];
+        return null;
+    }
     return best ? best.item : null;
 }
-// Judul di situs kadang berbeda total dari judul Kitsu (contoh: Naruto di Kitsu = "Naruto Kecil" di situs).
-// Isi di sini: { "<kitsuId>": "<judul persis di situs>" }. Judul ini dicoba sebagai judul utama.
-const KIT_OVERRIDE = {};
+
+const KIT_OVERRIDE = {
+    "11": "Naruto Kecil",
+    "49444": "Bleach: Sennen Kessen-hen Final Part - The Calamity",
+};
+// Dipakai KIT_PICK untuk melaporkan kandidat yang sama-sama cocok persis (ambigu).
+let KIT_AMBIG = null;
+
 async function KIT_TITLES(kitId) {
+    if (KIT_OVERRIDE[kitId])
+        return [KIT_OVERRIDE[kitId]];
     const at = JSON.parse(await m("https://kitsu.io/api/edge/anime/" + kitId)).data.attributes || {};
     const names = at.titles || {};
     const cand = [names.en_jp, at.canonicalTitle, names.en].concat(at.abbreviatedTitles || [])
         .filter(x => x && !/[\u3040-\u30ff\u4e00-\u9fff]/.test(x));
-    const titles = [...new Set(cand)];
-    if (KIT_OVERRIDE[kitId])
-        titles.unshift(KIT_OVERRIDE[kitId]);
-    return [...new Set(titles)];
+    return [...new Set(cand)];
 }
 async function KIT_SEARCH(titles) {
-    const queries = [...new Set(titles.flatMap(x => [x, KIT_QUERY(x)]))].slice(0, 4);
-    const parts = await Promise.all(queries.map(q => T(q)));
+    // Query dianggap sama jika hanya beda huruf besar-kecil/spasi (situs tidak case-sensitive).
     const seen = new Set();
-    return [].concat(...parts).filter(x => !seen.has(x.url) && seen.add(x.url));
+    const queries = [];
+    for (const q of titles.flatMap(x => [x, KIT_QUERY(x)])) {
+        const key = q.toLowerCase().replace(/\s+/g, " ").trim();
+        if (!key || seen.has(key))
+            continue;
+        seen.add(key);
+        queries.push(q);
+    }
+    const parts = await Promise.all(queries.slice(0, 4).map(q => T(q)));
+    const seenUrl = new Set();
+    return [].concat(...parts).filter(x => !seenUrl.has(x.url) && seenUrl.add(x.url));
 }
 function KIT_DEBUG(results, titles) {
     const entrySeason = titles.map(KIT_SEASON).find(x => x != null) || 1;
-    const keys = [...new Set(titles.map(KIT_BASE).filter(Boolean).map(KIT_KEY))];
-    const cands = results.slice(0, 3).map(r => {
-        const ps = KIT_SEASON(r.title);
-        const key = KIT_KEY(KIT_BASE(r.title));
-        return r.title.slice(0, 30) + "{s=" + ps + ",k=" + key + "}";
-    });
-    return " judul=[" + titles.slice(0, 2).join(" | ") + "] hasil=" + results.length + " | entri: season=" + entrySeason + " kunci=[" + keys.join(",") + "] | kandidat: " + cands.join(" ");
+    const key = KIT_KEY(KIT_BASE(titles[0] || "")).slice(0, 26);
+    const cands = results.slice(0, 3).map(r => r.title.slice(0, 28) + "{s=" + KIT_SEASON(r.title) + ",k=" + KIT_KEY(KIT_BASE(r.title)).slice(0, 26) + "}");
+    return " judul=[" + titles.slice(0, 2).map(x => x.slice(0, 40)).join(" | ") + "] hasil=" + results.length
+        + " | entri: s=" + entrySeason + " k=" + key + " | kandidat: " + cands.join(" ");
 }
 async function KIT(raw, epParam) {
     try {
         const mm = String(raw).match(/^kitsu:(\d+)(?::(\d+))?/i);
         const ep = mm[2] ? Number(mm[2]) : (epParam == null ? null : Number(epParam));
         if (!ep)
-            return [O("[v25] NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
+            return [O("[v26] NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
         const titles = await KIT_TITLES(mm[1]);
         const res = await KIT_SEARCH(titles);
         const pick = KIT_PICK(res, titles);
-        if (!pick)
-            return [O("[v25] NOMATCH: kitsu:" + mm[1] + KIT_DEBUG(res, titles))];
+        if (!pick) {
+            if (KIT_AMBIG)
+                return [O("[v26] NOMATCH: kitsu:" + mm[1] + " ambigu, sama-sama cocok persis: " + KIT_AMBIG.map(x => x.title.slice(0, 40)).join(" | ") + ". Isi KIT_OVERRIDE")];
+            return [O("[v26] NOMATCH: kitsu:" + mm[1] + KIT_DEBUG(res, titles))];
+        }
         const eps = await _(pick.url);
         const hit = eps.find(x => x.episodeNum === ep);
         if (!hit)
-            return [O("[v25] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
+            return [O("[v26] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
         const st = await $(hit.url);
-        return st.length ? st : [O("[v25] NOSTREAM: " + hit.url)];
+        return st.length ? st : [O("[v26] NOSTREAM: " + hit.url)];
     }
     catch (e) {
-        return [O("[v25] NOMATCH: kitsu gagal diambil (" + e.message + ")")];
+        return [O("[v26] NOMATCH: kitsu gagal diambil (" + e.message + ")")];
     }
 }
-// Film: judul diambil dari Kitsu (kitsu:ID) atau dari TMDB (ID angka, atau tt... lewat /3/find).
-// Episode pertama halaman film dipakai; kalau halaman tidak punya daftar episode, halaman itu sendiri.
 async function X(id, type, season, episode) {
     if (String(type) === "movie") {
-        return [O("[v25] NOMATCH: film belum didukung. Skrip ini hanya untuk serial kitsu")];
+        return [O("[v26] NOMATCH: film belum didukung. Skrip ini hanya untuk serial kitsu")];
     }
     if (!/^kitsu:/i.test(String(id))) {
-        return [O("[v25] NOMATCH: ID " + id + " bukan kitsu. Hanya ID kitsu yang didukung")];
+        return [O("[v26] NOMATCH: ID " + id + " bukan kitsu. Hanya ID kitsu yang didukung")];
     }
     return await KIT(id, episode);
 }
