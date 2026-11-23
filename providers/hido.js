@@ -236,8 +236,8 @@ async function KIT_SEARCH(titles){
  };
  for(const title of titles){add(title);add(KIT_QUERY(title));if(queries.length>=2)break;}
  const results=[],seen=new Set(),requestState={ambig:null,bestScore:0},showCache=new Map();
- for(const query of queries){
-  const found=await w(query);
+ const batches=await Promise.all(queries.map(query=>w(query)));
+ for(const found of batches){
   for(const item of found)if(item.url&&!seen.has(item.url)){seen.add(item.url);results.push(item);}
  }
  const pick=KIT_PICK(results,titles,requestState);
