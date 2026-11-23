@@ -65,53 +65,74 @@ async function g(path) {
 
 const y = new Map();
 async function b(t) {
- const key=String(t||"").toLowerCase().replace(/\\s+/g," ").trim();
- if(y.has(key)) return y.get(key);
- const task=(async()=>{
-  const {html}=await g(`/?s=${encodeURIComponent(t)}`);
-  const start=html.search(/class="[^"]*(?:listupd|postbody|result|main-content)[^"]*"/i);
-  let area=html;
-  if(start>=0){const tail=html.slice(start);const stop=tail.search(/class="[^"]*(?:sidebar|widgets)[^"]*"/i);area=stop>0?tail.slice(0,stop):tail.slice(0,50000);}
-  const out=[],seen=new Set();
-  const add=(href,title)=>{
-   if(!href||!/(?:\\/anime\\/|\\/series\\/)/i.test(href))return;
-   let clean=href;
-   if(clean.startsWith("/"))clean=KIT_BASE_URL.replace(/\\/$/,"")+clean;
-   if(!/^https?:\\/\\//i.test(clean)||seen.has(clean))return;
-   let name=u(title||"");
-   if(!name){
-    let slug=clean.split(/[?#]/)[0].split("/").filter(Boolean).pop()||"";
-    try{slug=decodeURIComponent(slug);}catch(_){}
-    name=slug.replace(/[-_]+/g," ");
-   }
-   name=name.replace(/\\s+/g," ").trim();
-   if(name){seen.add(clean);out.push({title:name,url:clean});}
-  };
-  const articles=/<article\\b[^>]*>([\\s\\S]*?)<\\/article>/gi;let m;
-  while((m=articles.exec(area))){
-   const article=m[1];
-   for(const link of p(article)){
-    const href=l(link.tag,"href")||"";
-    if(!/(?:\\/anime\\/|\\/series\\/)/i.test(href))continue;
-    const imgAlt=(link.inner.match(/<img\\b[^>]*\\balt=["']([^"']+)["']/i)||[])[1];
-    const heading=article.match(/<h[23][^>]*>([\\s\\S]*?)<\\/h[23]>/i)||article.match(/<div[^>]*class="[^"]*\\btt\\b[^"]*"[^>]*>([\\s\\S]*?)<\\/div>/i);
-    add(href,l(link.tag,"title")||a(heading?heading[1]:"")||imgAlt||a(link.inner));
-   }
-  }
-  // Tema situs dapat mengubah kartu hasil dari <article> menjadi elemen biasa.
-  // Fallback memindai tautan anime langsung dan mengambil title, alt gambar, teks, atau slug.
-  if(!out.length){
-   for(const link of p(area)){
-    const href=l(link.tag,"href")||"";
-    if(!/(?:\\/anime\\/|\\/series\\/)/i.test(href))continue;
-    const imgAlt=(link.inner.match(/<img\\b[^>]*\\balt=["']([^"']+)["']/i)||[])[1];
-    add(href,l(link.tag,"title")||imgAlt||a(link.inner));
-   }
-  }
-  return out;
- })();
- y.set(key,task);if(y.size>40)y.delete(y.keys().next().value);
- try{return await task;}catch(err){y.delete(key);throw err;}
+    const key = String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
+    if (y.has(key)) return y.get(key);
+
+    const task = (async () => {
+        const { html } = await g("/?s=" + encodeURIComponent(t));
+        const start = html.search(/class="[^"]*(?:listupd|postbody|result|main-content)[^"]*"/i);
+        let area = html;
+        if (start >= 0) {
+            const tail = html.slice(start);
+            const stop = tail.search(/class="[^"]*(?:sidebar|widgets)[^"]*"/i);
+            area = stop > 0 ? tail.slice(0, stop) : tail.slice(0, 50000);
+        }
+
+        const out = [];
+        const seen = new Set();
+        const add = (href, title) => {
+            if (!href || !/(?:\/anime\/|\/series\/)/i.test(href)) return;
+            let clean = href;
+            if (clean.startsWith("/")) clean = KIT_BASE_URL.replace(/\/$/, "") + clean;
+            if (!/^https?:\/\//i.test(clean) || seen.has(clean)) return;
+
+            let name = u(title || "");
+            if (!name) {
+                let slug = clean.split(/[?#]/)[0].split("/").filter(Boolean).pop() || "";
+                try { slug = decodeURIComponent(slug); } catch (_) {}
+                name = slug.replace(/[-_]+/g, " ");
+            }
+            name = name.replace(/\s+/g, " ").trim();
+            if (name) {
+                seen.add(clean);
+                out.push({ title: name, url: clean });
+            }
+        };
+
+        const articles = /<article\b[^>]*>([\s\S]*?)<\/article>/gi;
+        let match;
+        while ((match = articles.exec(area))) {
+            const article = match[1];
+            for (const link of p(article)) {
+                const href = l(link.tag, "href") || "";
+                if (!/(?:\/anime\/|\/series\/)/i.test(href)) continue;
+                const imgAlt = (link.inner.match(/<img\b[^>]*\balt=["']([^"']+)["']/i) || [])[1];
+                const heading = article.match(/<h[23][^>]*>([\s\S]*?)<\/h[23]>/i)
+                    || article.match(/<div[^>]*class="[^"]*\btt\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+                add(href, l(link.tag, "title") || a(heading ? heading[1] : "") || imgAlt || a(link.inner));
+            }
+        }
+
+        // Fallback untuk tema yang tidak membungkus kartu hasil dengan elemen <article>.
+        if (!out.length) {
+            for (const link of p(area)) {
+                const href = l(link.tag, "href") || "";
+                if (!/(?:\/anime\/|\/series\/)/i.test(href)) continue;
+                const imgAlt = (link.inner.match(/<img\b[^>]*\balt=["']([^"']+)["']/i) || [])[1];
+                add(href, l(link.tag, "title") || imgAlt || a(link.inner));
+            }
+        }
+        return out;
+    })();
+
+    y.set(key, task);
+    if (y.size > 40) y.delete(y.keys().next().value);
+    try {
+        return await task;
+    } catch (err) {
+        y.delete(key);
+        throw err;
+    }
 }
 
 async function w(t) {
