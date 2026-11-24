@@ -288,7 +288,7 @@ function KIT_PICK(results, titles) {
         const part = KIT_PART(r.title);
         if (!(ps === entrySeason || (ps == null && entrySeason === 1)))
             continue;
-        if (entryPart != null && part !== entryPart)
+        if (entryPart != null && part != null && part !== entryPart)
             continue;
         const rb = KIT_BASE(r.title);
         if (!rb)
@@ -385,7 +385,7 @@ async function KIT_VERIFY(results, titles) {
         const ps = KIT_SEASON(r.title);
         const part = KIT_PART(r.title);
         return (ps === entrySeason || (ps == null && entrySeason === 1))
-            && (entryPart == null || part === entryPart);
+            && (entryPart == null || part == null || part === entryPart);
     }).slice(0, 2);
     const checked = await Promise.all(cands.map(async r => {
         try {
