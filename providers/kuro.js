@@ -161,6 +161,8 @@ async function P(t) {
         return SC.get(t);
     const p = PR(t);
     SC.set(t, p);
+    if (SC.size > 40)
+        SC.delete(SC.keys().next().value);
     try {
         return await p;
     }
@@ -256,11 +258,12 @@ async function $(t) {
 const q = { 30984: { 17: 50 } }, K = t + "/mapping";
 const KIT_SEA = /(?:\b(\d+)(?:st|nd|rd|th)\s+season\b)|(?:\bseason\s*(\d+)\b)|(?:第\s*(\d+)\s*期)/i;
 function KIT_SEASON(t) { const q = String(t || "").match(KIT_SEA); return q ? Number(q[1] || q[2] || q[3]) : null; }
+function KIT_PART(t) { const q = String(t || "").match(/\bpart\s*(\d+)\b/i); return q ? Number(q[1]) : null; }
 function KIT_BASE(t) {
     return String(t || "")
         .replace(/\(\s*\d{4}\s*\)/g, " ")
         .replace(/thousand[\s-]*year[\s-]*blood[\s-]*war/gi, " sennen kessen hen ")
-        .replace(/\b\d+(?:st|nd|rd|th)\s+season\b|\bseason\s*\d+\b|\bpart\s*\d+\b|subtitle\s*indonesia|sub\s*indo/gi, " ")
+        .replace(/\b\d+(?:st|nd|rd|th)\s+season\b|\bseason\s*\d+\b|subtitle\s*indonesia|sub\s*indo/gi, " ")
         .replace(/第\s*\d+\s*期/g, " ")
         .replace(/[:.~!?'"’‘“”`\-–—,]/g, " ")
         .replace(/\s+/g, " ")
@@ -275,13 +278,17 @@ function KIT_QUERY(t) {
 function KIT_KEY(x) { return String(x || "").replace(/\s+/g, ""); }
 function KIT_PICK(results, titles) {
     const entrySeason = titles.map(KIT_SEASON).find(x => x != null) || 1;
+    const entryPart = titles.map(KIT_PART).find(x => x != null) ?? null;
     const bases = [...new Set(titles.map(KIT_BASE).filter(Boolean))];
     let best = null;
     const full = new Map();
     KIT_AMBIG = null;
     for (const r of results) {
         const ps = KIT_SEASON(r.title);
+        const part = KIT_PART(r.title);
         if (!(ps === entrySeason || (ps == null && entrySeason === 1)))
+            continue;
+        if (entryPart != null && part !== entryPart)
             continue;
         const rb = KIT_BASE(r.title);
         if (!rb)
@@ -347,8 +354,8 @@ function KIT_DEBUG(results, titles) {
     const title = titles[0] || "judul dari Kitsu";
     const candidates = results.slice(0, 3).map(item => item.title).filter(Boolean);
     if (!results.length)
-        return "Anime tidak ditemukan di Hidori: " + title;
-    return "Judul belum cocok di Hidori: " + title
+        return "Anime tidak ditemukan di Kuronime: " + title;
+    return "Judul belum cocok di Kuronime: " + title
         + (candidates.length ? " | Kandidat pencarian: " + candidates.join(" / ") : "");
 }
 let KIT_SHOW_CACHE = new Map();
@@ -373,24 +380,25 @@ async function KIT_VERIFY(results, titles) {
     const want = [...new Set(titles.map(t => KIT_KEY(KIT_BASE(t))).filter(k => k.length >= 8))];
     if (!want.length)
         return null;
+    const entryPart = titles.map(KIT_PART).find(x => x != null) ?? null;
     const cands = results.filter(r => {
         const ps = KIT_SEASON(r.title);
-        return ps === entrySeason || (ps == null && entrySeason === 1);
+        const part = KIT_PART(r.title);
+        return (ps === entrySeason || (ps == null && entrySeason === 1))
+            && (entryPart == null || part === entryPart);
     }).slice(0, 2);
-    const hits = [];
-    for (const r of cands) {
-        let html;
+    const checked = await Promise.all(cands.map(async r => {
         try {
-            html = await m(r.url, { headers: { Referer: e } });
+            const html = await m(r.url, { headers: { Referer: e } });
+            KIT_SHOW_CACHE.set(r.url, html);
+            const alt = KIT_ALT_TEXT(html);
+            return want.some(k => alt.includes(k)) ? r : null;
         }
         catch (err) {
-            continue;
+            return null;
         }
-        KIT_SHOW_CACHE.set(r.url, html);
-        const alt = KIT_ALT_TEXT(html);
-        if (want.some(k => alt.includes(k)))
-            hits.push(r);
-    }
+    }));
+    const hits = checked.filter(Boolean);
     if (hits.length > 1) {
         KIT_AMBIG = hits;
         return null;
