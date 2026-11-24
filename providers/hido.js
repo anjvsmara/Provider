@@ -448,38 +448,38 @@ async function KIT(raw, epParam) {
         const mm = String(raw).match(/^kitsu:(\d+)(?::(\d+))?/i);
         const ep = mm[2] ? Number(mm[2]) : (epParam == null ? null : Number(epParam));
         if (!ep)
-            return [r("[v16] NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
+            return [r("NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
         const titles = await KIT_TITLES(mm[1]);
         const search = await KIT_SEARCH(titles);
         const res = search.results;
         let pick = search.pick;
         if (!pick && search.ambig)
-            return [r("[v16] NOMATCH: kitsu:" + mm[1] + " ambigu, sama-sama cocok persis: " + search.ambig.map(x => x.title.slice(0, 40)).join(" | ") + ". Periksa judul alternatif Kitsu")];
+            return [r("NOMATCH: kitsu:" + mm[1] + " ambigu, sama-sama cocok persis: " + search.ambig.map(x => x.title.slice(0, 40)).join(" | ") + ". Periksa judul alternatif Kitsu")];
         if (!pick) {
             const verified = await KIT_VERIFY(res, titles, search.showCache);
             if (verified && verified.ambiguous)
-                return [r("[v16] NOMATCH: kitsu:" + mm[1] + " ambigu setelah verifikasi: " + verified.ambiguous.map(x => x.title.slice(0, 40)).join(" | ") + ". Periksa judul alternatif Kitsu")];
+                return [r("NOMATCH: kitsu:" + mm[1] + " ambigu setelah verifikasi: " + verified.ambiguous.map(x => x.title.slice(0, 40)).join(" | ") + ". Periksa judul alternatif Kitsu")];
             pick = verified && verified.item;
         }
         if (!pick)
-            return [r("[v16] NOMATCH: kitsu:" + mm[1] + KIT_DEBUG(res, titles))];
+            return [r("NOMATCH: kitsu:" + mm[1] + KIT_DEBUG(res, titles))];
         const eps = await S(pick.url, search.showCache);
         const hit = eps.find(x => x.episodeNum === ep);
         if (!hit)
-            return [r("[v16] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
+            return [r("NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
         const st = await $(hit.url);
-        return st.length ? st : [r("[v16] NOSTREAM: " + hit.url)];
+        return st.length ? st : [r("NOSTREAM: " + hit.url)];
     }
     catch (e) {
-        return [r("[v16] NOMATCH: kitsu gagal diambil (" + e.message + ")")];
+        return [r("NOMATCH: kitsu gagal diambil (" + e.message + ")")];
     }
 }
 async function _(id, type, season, episode) {
     if (String(type) === "movie") {
-        return [r("[v16] NOMATCH: film belum didukung. Skrip ini hanya untuk serial kitsu")];
+        return [r("NOMATCH: film belum didukung. Skrip ini hanya untuk serial kitsu")];
     }
     if (!/^kitsu:/i.test(String(id))) {
-        return [r("[v16] NOMATCH: ID " + id + " bukan kitsu. Hanya ID kitsu yang didukung")];
+        return [r("NOMATCH: ID " + id + " bukan kitsu. Hanya ID kitsu yang didukung")];
     }
     return await KIT(id, episode);
 }
