@@ -222,14 +222,21 @@ function KIT_SEASON(t) {
         return null;
     return ({ II: 2, III: 3, IV: 4, V: 5 })[roman[1].toUpperCase()];
 }
-function KIT_BASE(t) {
-    return String(t || "")
+function KIT_TRAILING_SEASON(t) {
+    const match = String(t || "").match(/\s+(\d+)\s*$/);
+    return match ? Number(match[1]) : null;
+}
+function KIT_BASE(t, confirmedSeason) {
+    let value = String(t || "");
+    if (confirmedSeason != null && KIT_TRAILING_SEASON(value) === Number(confirmedSeason))
+        value = value.replace(/\s+\d+\s*$/, " ");
+    return value
         .replace(/\(\s*\d{4}\s*\)/g, " ")
         .replace(/thousand[\s-]*year[\s-]*blood[\s-]*war/gi, " sennen kessen hen ")
         .replace(/\b\d+(?:st|nd|rd|th)\s+season\b|\bseason\s*\d+\b|\bpart\s*\d+\b|subtitle\s*indonesia|sub\s*indo/gi, " ")
         .replace(/\s+\b(?:II|III|IV|V)\s*$/i, " ")
         .replace(/第\s*\d+\s*期/g, " ")
-        .replace(/[:.~!?'"’‘“”\`\-–—,]/g, " ")
+        .replace(/[:.~!?'"’‘“”\x60\-–—,]/g, " ")
         .replace(/\s+/g, " ")
         .toLowerCase()
         .trim();
@@ -245,36 +252,72 @@ function KIT_KEY(x) { return String(x || "").replace(/\s+/g, ""); }
 // Pencocokan judul dua arah: kata entri harus ada di halaman, dan kata halaman harus ada di entri.
 // Ini mencegah "Naruto" cocok dengan "Boruto: Naruto Next Generations" atau "Naruto Shippuden".
 // Judul yang sama persis (abaikan spasi/tanda baca) selalu diterima.
-function KIT_PICK(results,titles,requestState){
- const entrySeason=titles.map(KIT_SEASON).find(x=>x!=null)??null;
- const bases=[...new Set(titles.map(KIT_BASE).filter(Boolean))];
- const full=new Map();let best=null;
- requestState.ambig=null;requestState.bestScore=0;
- for(const item of results){
-  const ps=KIT_SEASON(item.title);
-  // Jika judul Kitsu tidak menyebut musim, jangan menganggapnya otomatis Season 1.
-  if(entrySeason!=null&&!(ps===entrySeason||(ps==null&&entrySeason===1)))continue;
-  const pageBase=KIT_BASE(item.title);if(!pageBase)continue;
-  const pageKey=KIT_KEY(pageBase),pageWords=[...new Set(pageBase.split(" ").filter(Boolean))],pageSet=new Set(pageWords);
-  for(const base of bases){
-   const baseKey=KIT_KEY(base),baseWords=[...new Set(base.split(" ").filter(Boolean))];
-   let score=0;
-   if(baseKey===pageKey)score=1;
-   else{
-    if(baseWords.length<2||pageWords.length<2)continue;
-    const baseSet=new Set(baseWords);
-    const a=baseWords.filter(w=>pageSet.has(w)).length/baseWords.length;
-    const b=pageWords.filter(w=>baseSet.has(w)).length/pageWords.length;
-    if(a<0.9||b<0.9)continue;
-    score=Math.min(a,b);
-   }
-   if(score===1&&!full.has(item.url))full.set(item.url,item);
-   if(!best||score>best.score)best={item,score};
-  }
- }
- if(full.size>1){requestState.ambig=[...full.values()];return null;}
- if(best)requestState.bestScore=best.score;
- return best&&best.score>=0.9?best.item:null;
+function KIT_PICK(results, titles, requestState) {
+    const explicitSeason = titles.map(KIT_SEASON).find(x => x != null) ?? null;
+    const trailingSeasons = titles.map(KIT_TRAILING_SEASON).filter(x => x != null);
+    const full = new Map();
+    let best = null;
+
+    requestState.ambig = null;
+    requestState.bestScore = 0;
+
+    for (const item of results) {
+        const pageSeason = KIT_SEASON(item.title);
+        const candidateSeason = pageSeason ?? KIT_TRAILING_SEASON(item.title);
+
+        if (explicitSeason != null &&
+            !(candidateSeason === explicitSeason ||
+              (candidateSeason == null && explicitSeason === 1))) continue;
+
+        if (explicitSeason == null && trailingSeasons.length &&
+            !trailingSeasons.includes(candidateSeason)) continue;
+
+        const bases = titles.map(title => {
+            const trailing = KIT_SEASON(title) == null
+                ? KIT_TRAILING_SEASON(title)
+                : null;
+            const confirmed = trailing != null && trailing === candidateSeason
+                ? trailing : null;
+            return KIT_BASE(title, confirmed);
+        }).filter(Boolean);
+
+        const pageBase = KIT_BASE(item.title, candidateSeason);
+        if (!pageBase) continue;
+
+        const pageKey = KIT_KEY(pageBase);
+        const pageWords = [...new Set(pageBase.split(" ").filter(Boolean))];
+        const pageSet = new Set(pageWords);
+
+        for (const base of bases) {
+            const baseKey = KIT_KEY(base);
+            const baseWords = [...new Set(base.split(" ").filter(Boolean))];
+            let score = 0;
+
+            if (baseKey === pageKey) {
+                score = 1;
+            } else {
+                if (baseWords.length < 2 || pageWords.length < 2) continue;
+                const baseSet = new Set(baseWords);
+                const a = baseWords.filter(w => pageSet.has(w)).length / baseWords.length;
+                const b = pageWords.filter(w => baseSet.has(w)).length / pageWords.length;
+                if (a < 0.9 || b < 0.9) continue;
+                score = Math.min(a, b);
+            }
+
+            if (score === 1 && !full.has(item.url))
+                full.set(item.url, item);
+            if (!best || score > best.score)
+                best = { item, score };
+        }
+    }
+
+    if (full.size > 1) {
+        requestState.ambig = [...full.values()];
+        return null;
+    }
+
+    if (best) requestState.bestScore = best.score;
+    return best && best.score >= 0.9 ? best.item : null;
 }
 
 const KIT_OVERRIDE = {
