@@ -377,10 +377,13 @@ function KIT_ENTRY_SEASON(titles) {
 }
 async function KIT_VERIFY(results, titles) {
     const entrySeason = KIT_ENTRY_SEASON(titles);
-    const want = [...new Set(titles.map(t => KIT_KEY(KIT_BASE(t))).filter(k => k.length >= 8))];
+    const entryPart = titles.map(KIT_PART).find(x => x != null) ?? null;
+    const want = [...new Set(titles
+        .filter(t => entryPart == null || KIT_PART(t) === entryPart)
+        .map(t => KIT_KEY(KIT_BASE(t)))
+        .filter(k => k.length >= 8))];
     if (!want.length)
         return null;
-    const entryPart = titles.map(KIT_PART).find(x => x != null) ?? null;
     const cands = results.filter(r => {
         const ps = KIT_SEASON(r.title);
         const part = KIT_PART(r.title);
