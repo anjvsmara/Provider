@@ -229,7 +229,7 @@ function KIT_TRAILING_SEASON(t) {
 function KIT_BASE(t, confirmedSeason) {
     let value = String(t || "");
     if (confirmedSeason != null && KIT_TRAILING_SEASON(value) === Number(confirmedSeason))
-        value = value.replace(/\s+\d+\s*$/, " ");
+        value = value.replace(/\s+(?:season\s+)?\d+\s*$/i, " ");
     return value
         .replace(/\(\s*\d{4}\s*\)/g, " ")
         .replace(/thousand[\s-]*year[\s-]*blood[\s-]*war/gi, " sennen kessen hen ")
