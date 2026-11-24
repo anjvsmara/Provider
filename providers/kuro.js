@@ -326,6 +326,9 @@ const KIT_OVERRIDE = {
     "11": "Naruto Kecil",
     "49444": "Bleach: Sennen Kessen-hen Final Part",
 };
+const KIT_EPISODE_OFFSET = {
+    "45619": 12,
+};
 let KIT_AMBIG = null;
 async function KIT_TITLES(kitId) {
     if (KIT_OVERRIDE[kitId])
@@ -412,6 +415,7 @@ async function KIT(raw, epParam) {
     try {
         const mm = String(raw).match(/^kitsu:(\d+)(?::(\d+))?/i);
         const ep = mm[2] ? Number(mm[2]) : (epParam == null ? null : Number(epParam));
+        const siteEpisode = ep + (KIT_EPISODE_OFFSET[mm[1]] || 0);
         if (!ep)
             return [O("Nomor episode tidak terbaca dari ID Kitsu")];
         const titles = await KIT_TITLES(mm[1]);
@@ -426,20 +430,20 @@ async function KIT(raw, epParam) {
             return [O(KIT_DEBUG(res, titles))];
         }
         const eps = await _(pick.url);
-        const hit = eps.find(x => x.episodeNum === ep);
+        const hit = eps.find(x => x.episodeNum === siteEpisode);
         if (!hit) {
             const slug = (pick.url.match(/\/anime\/([^\/?#]+)/) || [])[1];
             if (slug) {
                 try {
-                    const direct = await $(e + "/nonton-" + slug + "-episode-" + ep + "/");
+                    const direct = await $(e + "/nonton-" + slug + "-episode-" + siteEpisode + "/");
                     if (direct.length)
                         return direct;
                 }
                 catch (err) { }
             }
             return [O(eps.length
-                ? "Episode " + ep + " belum tersedia di " + pick.title + " (tersedia " + eps.length + " episode)"
-                : "Anime ditemukan, tetapi daftar episode belum tersedia di Hidori: " + pick.title)];
+                ? "Episode " + siteEpisode + " (Kitsu " + ep + ") belum tersedia di " + pick.title + " (tersedia " + eps.length + " episode)"
+                : "Anime ditemukan, tetapi daftar episode belum tersedia di Kuronime: " + pick.title)];
         }
         const st = await $(hit.url);
         return st.length ? st : [O("Episode ditemukan, tetapi link stream tidak tersedia")];
