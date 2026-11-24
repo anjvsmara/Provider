@@ -385,11 +385,17 @@ async function KIT_SEARCH(titles) {
     return { results, pick, ambig: requestState.ambig, showCache };
 }
 function KIT_DEBUG(results, titles) {
-    const entrySeason = titles.map(KIT_SEASON).find(x => x != null) || 1;
-    const key = KIT_KEY(KIT_BASE(titles[0] || "")).slice(0, 26);
-    const cands = results.slice(0, 3).map(r => r.title.slice(0, 28) + "{s=" + KIT_SEASON(r.title) + ",k=" + KIT_KEY(KIT_BASE(r.title)).slice(0, 26) + "}");
+    const entrySeason = KIT_ENTRY_SEASON(titles);
+    const season = entrySeason == null ? 1 : entrySeason;
+    const key = KIT_KEY(KIT_BASE(titles[0] || "", season)).slice(0, 32);
+    const cands = results.slice(0, 3).map(r => {
+        const pageSeason = KIT_SEASON(r.title);
+        const candidateSeason = pageSeason ?? KIT_TRAILING_SEASON(r.title);
+        const pageKey = KIT_KEY(KIT_BASE(r.title, candidateSeason)).slice(0, 32);
+        return r.title.slice(0, 34) + "{s=" + candidateSeason + ",k=" + pageKey + "}";
+    });
     return " judul=[" + titles.slice(0, 2).map(x => x.slice(0, 40)).join(" | ") + "] hasil=" + results.length
-        + " | entri: s=" + entrySeason + " k=" + key + " | kandidat: " + cands.join(" ");
+        + " | entri: s=" + season + " k=" + key + " | kandidat: " + cands.join(" ");
 }
 // Ambil daftar "Judul:" (judul alternatif, termasuk Inggris) dari halaman anime Kuronime.
 function KIT_ALT_TEXT(html) {
