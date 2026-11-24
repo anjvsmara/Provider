@@ -259,7 +259,6 @@ function KIT_SEASON(t) { const q = String(t || "").match(KIT_SEA); return q ? Nu
 function KIT_BASE(t) {
     return String(t || "")
         .replace(/\(\s*\d{4}\s*\)/g, " ")
-        // Situs memakai nama "Sennen Kessen-hen", Kitsu memakai "Thousand-Year Blood War".
         .replace(/thousand[\s-]*year[\s-]*blood[\s-]*war/gi, " sennen kessen hen ")
         .replace(/\b\d+(?:st|nd|rd|th)\s+season\b|\bseason\s*\d+\b|\bpart\s*\d+\b|subtitle\s*indonesia|sub\s*indo/gi, " ")
         .replace(/第\s*\d+\s*期/g, " ")
@@ -269,21 +268,15 @@ function KIT_BASE(t) {
         .trim();
 }
 function KIT_QUERY(t) {
-    // Varian query untuk pencarian situs: "2nd Season" -> "Season 2", dan nama TYBW -> "Sennen Kessen-hen".
     return String(t || "")
         .replace(/\b(\d+)(?:st|nd|rd|th)\s+season\b/gi, "Season $1")
         .replace(/thousand[\s-]*year[\s-]*blood[\s-]*war/gi, "Sennen Kessen-hen");
 }
-
 function KIT_KEY(x) { return String(x || "").replace(/\s+/g, ""); }
-// Pencocokan judul dua arah: kata entri harus ada di halaman, dan kata halaman harus ada di entri.
-// Ini mencegah "Naruto" cocok dengan "Boruto: Naruto Next Generations" atau "Naruto Shippuden".
-// Judul yang sama persis (abaikan spasi/tanda baca) selalu diterima.
 function KIT_PICK(results, titles) {
     const entrySeason = titles.map(KIT_SEASON).find(x => x != null) || 1;
     const bases = [...new Set(titles.map(KIT_BASE).filter(Boolean))];
     let best = null;
-    // Kandidat yang cocok penuh (exact, atau semua kata sama), dikelompokkan per judul dasar.
     const full = new Map();
     KIT_AMBIG = null;
     for (const r of results) {
@@ -316,24 +309,17 @@ function KIT_PICK(results, titles) {
                 best = { item: r, score };
         }
     }
-    // Dua pertunjukan berbeda sama-sama cocok penuh (misal dua cour dalam satu entri Kitsu):
-    // jangan menebak, laporkan sebagai ambigu.
     if (full.size >= 2) {
         KIT_AMBIG = [...full.values()];
         return null;
     }
     return best ? best.item : null;
 }
-
 const KIT_OVERRIDE = {
     "11": "Naruto Kecil",
-    // Judul halaman di situs (Kuronime): "Bleach: Sennen Kessen-hen Final Part Sub Indo".
-    // Tebakan lama "... - The Calamity" tidak ada di situs, makanya selalu NOMATCH.
     "49444": "Bleach: Sennen Kessen-hen Final Part",
 };
-// Dipakai KIT_PICK untuk melaporkan kandidat yang sama-sama cocok persis (ambigu).
 let KIT_AMBIG = null;
-
 async function KIT_TITLES(kitId) {
     if (KIT_OVERRIDE[kitId])
         return [KIT_OVERRIDE[kitId]];
@@ -344,7 +330,6 @@ async function KIT_TITLES(kitId) {
     return [...new Set(cand)];
 }
 async function KIT_SEARCH(titles) {
-    // Query dianggap sama jika hanya beda huruf besar-kecil/spasi (situs tidak case-sensitive).
     const seen = new Set();
     const queries = [];
     for (const q of titles.flatMap(x => [x, KIT_QUERY(x)])) {
@@ -365,9 +350,7 @@ function KIT_DEBUG(results, titles) {
     return " judul=[" + titles.slice(0, 2).map(x => x.slice(0, 40)).join(" | ") + "] hasil=" + results.length
         + " | entri: s=" + entrySeason + " k=" + key + " | kandidat: " + cands.join(" ");
 }
-// Cache halaman anime per pemanggilan KIT (dipakai ulang oleh _ agar tidak diambil dua kali).
 let KIT_SHOW_CACHE = new Map();
-// Ambil daftar "Judul:" (judul alternatif, termasuk Inggris) dari halaman anime Kuronime.
 function KIT_ALT_TEXT(html) {
     const text = String(html || "")
         .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -384,8 +367,6 @@ function KIT_ALT_TEXT(html) {
 function KIT_ENTRY_SEASON(titles) {
     return titles.map(KIT_SEASON).find(x => x != null) || 1;
 }
-// Dipakai hanya jika pencocokan judul utama gagal: buka maksimal 2 kandidat yang season-nya cocok,
-// lalu cek apakah daftar "Judul:" halamannya memuat judul Kitsu (termasuk judul Inggris).
 async function KIT_VERIFY(results, titles) {
     const entrySeason = KIT_ENTRY_SEASON(titles);
     const want = [...new Set(titles.map(t => KIT_KEY(KIT_BASE(t))).filter(k => k.length >= 8))];
@@ -434,8 +415,18 @@ async function KIT(raw, epParam) {
         }
         const eps = await _(pick.url);
         const hit = eps.find(x => x.episodeNum === ep);
-        if (!hit)
+        if (!hit) {
+            const slug = (pick.url.match(/\/anime\/([^\/?#]+)/) || [])[1];
+            if (slug) {
+                try {
+                    const direct = await $(e + "/nonton-" + slug + "-episode-" + ep + "/");
+                    if (direct.length)
+                        return direct;
+                }
+                catch (err) { }
+            }
             return [O("[v28] NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
+        }
         const st = await $(hit.url);
         return st.length ? st : [O("[v28] NOSTREAM: " + hit.url)];
     }
