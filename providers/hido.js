@@ -273,9 +273,7 @@ function KIT_PICK(results, titles, requestState) {
             !trailingSeasons.includes(candidateSeason)) continue;
 
         const bases = titles.map(title => {
-            const trailing = KIT_SEASON(title) == null
-                ? KIT_TRAILING_SEASON(title)
-                : null;
+            const trailing = KIT_TRAILING_SEASON(title);
             const confirmed = trailing != null && trailing === candidateSeason
                 ? trailing : null;
             return KIT_BASE(title, confirmed);
