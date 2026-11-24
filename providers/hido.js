@@ -385,17 +385,12 @@ async function KIT_SEARCH(titles) {
     return { results, pick, ambig: requestState.ambig, showCache };
 }
 function KIT_DEBUG(results, titles) {
-    const entrySeason = KIT_ENTRY_SEASON(titles);
-    const season = entrySeason == null ? 1 : entrySeason;
-    const key = KIT_KEY(KIT_BASE(titles[0] || "", season)).slice(0, 32);
-    const cands = results.slice(0, 3).map(r => {
-        const pageSeason = KIT_SEASON(r.title);
-        const candidateSeason = pageSeason ?? KIT_TRAILING_SEASON(r.title);
-        const pageKey = KIT_KEY(KIT_BASE(r.title, candidateSeason)).slice(0, 32);
-        return r.title.slice(0, 34) + "{s=" + candidateSeason + ",k=" + pageKey + "}";
-    });
-    return " judul=[" + titles.slice(0, 2).map(x => x.slice(0, 40)).join(" | ") + "] hasil=" + results.length
-        + " | entri: s=" + season + " k=" + key + " | kandidat: " + cands.join(" ");
+    const title = titles[0] || "judul dari Kitsu";
+    const candidates = results.slice(0, 3).map(item => item.title).filter(Boolean);
+    if (!results.length)
+        return "Anime tidak ditemukan di Hidori: " + title;
+    return "Judul belum cocok di Hidori: " + title
+        + (candidates.length ? " | Kandidat pencarian: " + candidates.join(" / ") : "");
 }
 // Ambil daftar "Judul:" (judul alternatif, termasuk Inggris) dari halaman anime Kuronime.
 function KIT_ALT_TEXT(html) {
@@ -448,38 +443,41 @@ async function KIT(raw, epParam) {
         const mm = String(raw).match(/^kitsu:(\d+)(?::(\d+))?/i);
         const ep = mm[2] ? Number(mm[2]) : (epParam == null ? null : Number(epParam));
         if (!ep)
-            return [r("NOMATCH: kitsu:" + mm[1] + " tidak punya nomor episode")];
+            return [r("Nomor episode tidak terbaca dari ID Kitsu")];
         const titles = await KIT_TITLES(mm[1]);
         const search = await KIT_SEARCH(titles);
         const res = search.results;
         let pick = search.pick;
         if (!pick && search.ambig)
-            return [r("NOMATCH: kitsu:" + mm[1] + " ambigu, sama-sama cocok persis: " + search.ambig.map(x => x.title.slice(0, 40)).join(" | ") + ". Periksa judul alternatif Kitsu")];
+            return [r("Ada beberapa judul yang cocok: " + search.ambig.map(x => x.title).join(" / "))];
         if (!pick) {
             const verified = await KIT_VERIFY(res, titles, search.showCache);
             if (verified && verified.ambiguous)
-                return [r("NOMATCH: kitsu:" + mm[1] + " ambigu setelah verifikasi: " + verified.ambiguous.map(x => x.title.slice(0, 40)).join(" | ") + ". Periksa judul alternatif Kitsu")];
+                return [r("Ada beberapa judul yang cocok setelah pemeriksaan: " + verified.ambiguous.map(x => x.title).join(" / "))];
             pick = verified && verified.item;
         }
         if (!pick)
-            return [r("NOMATCH: kitsu:" + mm[1] + KIT_DEBUG(res, titles))];
+            return [r(KIT_DEBUG(res, titles))];
         const eps = await S(pick.url, search.showCache);
         const hit = eps.find(x => x.episodeNum === ep);
-        if (!hit)
-            return [r("NOEP: episode " + ep + " tidak ada di " + pick.title + " (" + eps.length + " episode)")];
+        if (!hit) {
+            if (!eps.length)
+                return [r("Anime ditemukan, tetapi daftar episode belum tersedia di Hidori: " + pick.title)];
+            return [r("Episode " + ep + " belum tersedia di " + pick.title + " (tersedia " + eps.length + " episode)")];
+        }
         const st = await $(hit.url);
-        return st.length ? st : [r("NOSTREAM: " + hit.url)];
+        return st.length ? st : [r("Episode ditemukan, tetapi link stream tidak tersedia")];
     }
     catch (e) {
-        return [r("NOMATCH: kitsu gagal diambil (" + e.message + ")")];
+        return [r("Pencarian gagal: " + e.message)];
     }
 }
 async function _(id, type, season, episode) {
     if (String(type) === "movie") {
-        return [r("NOMATCH: film belum didukung. Skrip ini hanya untuk serial kitsu")];
+        return [r("Hido hanya mendukung anime serial, bukan film")];
     }
     if (!/^kitsu:/i.test(String(id))) {
-        return [r("NOMATCH: ID " + id + " bukan kitsu. Hanya ID kitsu yang didukung")];
+        return [r("ID tidak didukung: Hido membutuhkan ID Kitsu")];
     }
     return await KIT(id, episode);
 }
