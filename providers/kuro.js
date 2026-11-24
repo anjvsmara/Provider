@@ -257,11 +257,19 @@ async function $(t) {
 }
 const q = { 30984: { 17: 50 } }, K = t + "/mapping";
 const KIT_SEA = /(?:\b(\d+)(?:st|nd|rd|th)\s+season\b)|(?:\bseason\s*(\d+)\b)|(?:第\s*(\d+)\s*期)/i;
-function KIT_SEASON(t) { const q = String(t || "").match(KIT_SEA); return q ? Number(q[1] || q[2] || q[3]) : null; }
+function KIT_SEASON(t) {
+    const value = String(t || "");
+    if (/\bfinal\s+season\b/i.test(value))
+        return "final";
+    const q = value.match(KIT_SEA);
+    return q ? Number(q[1] || q[2] || q[3]) : null;
+}
 function KIT_PART(t) { const q = String(t || "").match(/\bpart\s*(\d+)\b/i); return q ? Number(q[1]) : null; }
 function KIT_BASE(t) {
     return String(t || "")
         .replace(/\(\s*\d{4}\s*\)/g, " ")
+        .replace(/\s*\([^)]*\)/g, " ")
+        .replace(/\b(?:the\s+)?final\s+season\b/gi, " ")
         .replace(/thousand[\s-]*year[\s-]*blood[\s-]*war/gi, " sennen kessen hen ")
         .replace(/\b\d+(?:st|nd|rd|th)\s+season\b|\bseason\s*\d+\b|subtitle\s*indonesia|sub\s*indo/gi, " ")
         .replace(/第\s*\d+\s*期/g, " ")
@@ -332,12 +340,13 @@ const KIT_EPISODE_OFFSET = {
 let KIT_AMBIG = null;
 async function KIT_TITLES(kitId) {
     if (KIT_OVERRIDE[kitId])
-        return [KIT_OVERRIDE[kitId]];
+        return { titles: [KIT_OVERRIDE[kitId]], type: null };
     const at = JSON.parse(await m("https://kitsu.io/api/edge/anime/" + kitId)).data.attributes || {};
     const names = at.titles || {};
     const cand = [names.en_jp, at.canonicalTitle, names.en].concat(at.abbreviatedTitles || [])
         .filter(x => x && !/[\u3040-\u30ff\u4e00-\u9fff]/.test(x));
-    return [...new Set(cand)];
+    const type = String(at.subtype || at.showType || "").trim().toLowerCase();
+    return { titles: [...new Set(cand)], type: type || null };
 }
 async function KIT_SEARCH(titles) {
     const seen = new Set();
@@ -375,10 +384,19 @@ function KIT_ALT_TEXT(html) {
     const stop = rest.search(/\b(?:Genre|Status|Studio|Tayang|Season|Tipe|Durasi|Released|Updated)\s*:/i);
     return KIT_KEY(KIT_BASE(stop < 0 ? rest.slice(0, 400) : rest.slice(0, stop)));
 }
+function KIT_PAGE_TYPE(html) {
+    const text = String(html || "")
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ");
+    const hit = text.match(/\bTipe\s*:\s*(TV|Movie)\b/i);
+    return hit ? hit[1].toLowerCase() : null;
+}
 function KIT_ENTRY_SEASON(titles) {
     return titles.map(KIT_SEASON).find(x => x != null) || 1;
 }
-async function KIT_VERIFY(results, titles) {
+async function KIT_VERIFY(results, titles, expectedType) {
     const entrySeason = KIT_ENTRY_SEASON(titles);
     const entryPart = titles.map(KIT_PART).find(x => x != null) ?? null;
     const want = [...new Set(titles
@@ -397,6 +415,9 @@ async function KIT_VERIFY(results, titles) {
         try {
             const html = await m(r.url, { headers: { Referer: e } });
             KIT_SHOW_CACHE.set(r.url, html);
+            const pageType = KIT_PAGE_TYPE(html);
+            if (expectedType && pageType && pageType !== expectedType)
+                return null;
             const alt = KIT_ALT_TEXT(html);
             return want.some(k => alt.includes(k)) ? r : null;
         }
@@ -409,6 +430,7 @@ async function KIT_VERIFY(results, titles) {
         KIT_AMBIG = hits;
         return null;
     }
+    KIT_AMBIG = null;
     return hits.length === 1 ? hits[0] : null;
 }
 async function KIT(raw, epParam) {
@@ -418,12 +440,15 @@ async function KIT(raw, epParam) {
         const siteEpisode = ep + (KIT_EPISODE_OFFSET[mm[1]] || 0);
         if (!ep)
             return [O("Nomor episode tidak terbaca dari ID Kitsu")];
-        const titles = await KIT_TITLES(mm[1]);
+        const kit = await KIT_TITLES(mm[1]);
+        const titles = kit.titles;
         KIT_SHOW_CACHE = new Map();
         const res = await KIT_SEARCH(titles);
         let pick = KIT_PICK(res, titles);
-        if (!pick && !KIT_AMBIG)
-            pick = await KIT_VERIFY(res, titles);
+        if (!pick) {
+            KIT_AMBIG = null;
+            pick = await KIT_VERIFY(res, titles, kit.type);
+        }
         if (!pick) {
             if (KIT_AMBIG)
                 return [O("Ada beberapa judul yang cocok: " + KIT_AMBIG.map(x => x.title).join(" / "))];
