@@ -218,12 +218,15 @@ async function $(t) {
     let l;
     try {
         const n = await m("https://animeku.org/api/v9/sources", { method: "POST", headers: { "Content-Type": "application/json", Origin: e, Referer: t, Accept: "application/json, text/plain, */*" }, body: JSON.stringify({ id: i[1] }) });
+
         l = JSON.parse(n);
+
     }
     catch (e) {
         return "API sumber gagal: " + e.message, k(await R(n, t, new Set));
     }
     const u = l.mirror ? await h(l.mirror) : null;
+
     u || ("mirror tidak bisa di-decode");
     const c = function (t) {
         const e = [];
@@ -308,32 +311,41 @@ function KIT_KEY(x) { return String(x || "").replace(/\s+/g, ""); }
 function KIT_PICK(results, titles) {
     const entrySeason = titles.map(KIT_SEASON).find(x => x != null) || 1;
     const entryPart = titles.map(KIT_PART).find(x => x != null) ?? null;
-    const bases = [...new Set(titles.map(KIT_BASE).filter(Boolean))];
+    const bases = [];
+    titles.forEach((title, index) => {
+        const value = KIT_BASE(title);
+        if (value && !bases.some(x => x.value === value))
+            bases.push({ value, index });
+    });
+
     let best = null;
     const full = new Map();
     KIT_AMBIG = null;
+
     for (const r of results) {
         const ps = KIT_RESULT_SEASON(r);
         const part = KIT_PART(r.title);
+
         if (!(ps === entrySeason || (ps == null && entrySeason === 1)))
             continue;
         if (entryPart != null && part != null && part !== entryPart)
             continue;
 
-        // Alias Kitsu dengan season eksplisit boleh mencocokkan slug URL,
-        // tetapi hanya jika season kandidat sudah terkonfirmasi sama.
         const anchors = titles
             .filter(title => KIT_SEASON(title) === entrySeason)
             .map(KIT_ANCHOR_KEY)
             .filter(Boolean);
+
         const candidateKey = KIT_ANCHOR_KEY(
-            String(r.title || "") + " " + String(r.url || "").replace(/[-_]+/g, " ")
+            String(r.title || "") + " " +
+            String(r.url || "").replace(/[-_]+/g, " ")
         );
+
         if (anchors.some(key => candidateKey.includes(key))) {
             const anchorBase = KIT_BASE(r.title);
             const anchorKey = KIT_KEY(anchorBase);
             if (anchorBase) {
-                full.set(anchorKey, r);
+                full.set(anchorKey, { item: r, score: 3 });
                 if (!best || best.score < 3)
                     best = { item: r, score: 3 };
             }
@@ -343,35 +355,57 @@ function KIT_PICK(results, titles) {
         const rb = KIT_BASE(r.title);
         if (!rb)
             continue;
+
         const rKey = KIT_KEY(rb);
         const rWords = rb.split(" ");
         const rSet = new Set(rWords);
+
         for (const b of bases) {
             let score;
-            if (KIT_KEY(b) === rKey) {
-                score = 3;
-            }
-            else {
-                const bWords = b.split(" ");
+
+            if (KIT_KEY(b.value) === rKey) {
+                score = 3 - b.index * 0.01;
+            } else {
+                const bWords = b.value.split(" ");
                 const bSet = new Set(bWords);
-                const entryInPage = bWords.filter(w => rSet.has(w)).length / bWords.length;
-                const pageInEntry = rWords.filter(w => bSet.has(w)).length / rWords.length;
+                const entryInPage =
+                    bWords.filter(w => rSet.has(w)).length / bWords.length;
+                const pageInEntry =
+                    rWords.filter(w => bSet.has(w)).length / rWords.length;
+
                 if (entryInPage < 0.8 || pageInEntry < 0.8)
                     continue;
-                score = Math.min(entryInPage, pageInEntry);
+
+                score = Math.min(entryInPage, pageInEntry) - b.index * 0.001;
             }
-            if (score >= 0.999 && !full.has(rKey))
-                full.set(rKey, r);
+
+            if (score >= 0.999) {
+                const old = full.get(rKey);
+                if (!old || score > old.score)
+                    full.set(rKey, { item: r, score });
+            }
+
             if (!best || score > best.score)
                 best = { item: r, score };
         }
     }
-    if (full.size >= 2) {
-        KIT_AMBIG = [...full.values()];
-        return null;
+
+    if (full.size) {
+        const ranked = [...full.values()].sort((a, b) => b.score - a.score);
+        const highest = ranked[0].score;
+        const tied = ranked.filter(x => Math.abs(x.score - highest) < 0.0001);
+
+        if (tied.length > 1) {
+            KIT_AMBIG = tied.map(x => x.item);
+            return null;
+        }
+
+        return ranked[0].item;
     }
+
     return best ? best.item : null;
 }
+
 const KIT_OVERRIDE = {
     "11": "Naruto Kecil",
     "49444": "Bleach: Sennen Kessen-hen Final Part",
@@ -388,7 +422,11 @@ async function KIT_TITLES(kitId) {
     const cand = [names.en_jp, at.canonicalTitle, names.en].concat(at.abbreviatedTitles || [])
         .filter(x => x && !/[\u3040-\u30ff\u4e00-\u9fff]/.test(x));
     const type = String(at.subtype || at.showType || "").trim().toLowerCase();
-    return { titles: [...new Set(cand)], type: type || null };
+    return {
+        titles: [...new Set(cand)],
+        movieAlias: names.en || names.en_us || null,
+        type: type || null
+    };
 }
 async function KIT_SEARCH(titles) {
     const seen = new Set();
@@ -453,7 +491,7 @@ function KIT_PAGE_TEXT(html) {
     );
 }
 
-async function KIT_VERIFY(results, titles, expectedType) {
+async function KIT_VERIFY(results, titles, expectedType, movieAliases) {
     const entrySeason = KIT_ENTRY_SEASON(titles);
     const entryPart = titles.map(KIT_PART).find(x => x != null) ?? null;
 
@@ -479,11 +517,42 @@ async function KIT_VERIFY(results, titles, expectedType) {
             KIT_SHOW_CACHE.set(r.url, html);
 
             const pageType = KIT_PAGE_TYPE(html);
+            ;
+            if (expectedType === "movie") {
+                ;
+            }
             if (expectedType && pageType !== expectedType)
                 return null;
 
             const pageKey = KIT_PAGE_TEXT(html);
-            return anchors.some(k => pageKey.includes(k)) ? r : null;
+            const anchorHits = anchors.filter(k => pageKey.includes(k));
+            if (expectedType === "movie") {
+                ;
+            }
+            if (anchorHits.length) return r;
+
+            if (expectedType === "movie" && movieAliases && movieAliases.length) {
+                const alt = KIT_ALT_TEXT(html);
+                ;
+                ;
+                ;
+                ;
+                ;
+
+                const generic = new Set(["demon", "slayer", "kimetsu", "no", "yaiba", "the", "movie"]);
+
+                for (const alias of movieAliases) {
+                    const words = KIT_BASE(alias).split(" ")
+                        .filter(w => w.length >= 3 && !generic.has(w));
+
+                    for (let i = 0; i < words.length - 1; i++) {
+                        const phrase = KIT_ANCHOR_KEY(words[i] + words[i + 1]);
+                        if (phrase.length >= 10 && alt.includes(phrase))
+                            return r;
+                    }
+                }
+            }
+            return null;
         }
         catch (err) {
             return null;
@@ -560,9 +629,12 @@ async function KIT_MOVIE(raw) {
         if (!titles.length)
             return [O("Judul movie dari Kitsu kosong")];
 
+        const movieAliases = [kit.movieAlias].filter(Boolean);
+        ;
+
         KIT_SHOW_CACHE = new Map();
         const results = await KIT_SEARCH(titles);
-        const pick = await KIT_VERIFY(results, titles, "movie");
+        const pick = await KIT_VERIFY(results, titles, "movie", movieAliases);
 
         if (!pick) {
             if (KIT_AMBIG)
