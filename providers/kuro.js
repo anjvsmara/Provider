@@ -264,6 +264,14 @@ function KIT_SEASON(t) {
     const q = value.match(KIT_SEA);
     return q ? Number(q[1] || q[2] || q[3]) : null;
 }
+function KIT_RESULT_SEASON(item) {
+    const titleSeason = KIT_SEASON(item && item.title);
+    if (titleSeason != null) return titleSeason;
+    return KIT_SEASON(String(item && item.url || "").replace(/[-_]+/g, " "));
+}
+function KIT_ANCHOR_KEY(value) {
+    return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
 function KIT_PART(t) { const q = String(t || "").match(/\bpart\s*(\d+)\b/i); return q ? Number(q[1]) : null; }
 function KIT_BASE(t) {
     return String(t || "")
@@ -273,7 +281,7 @@ function KIT_BASE(t) {
         .replace(/thousand[\s-]*year[\s-]*blood[\s-]*war/gi, " sennen kessen hen ")
         .replace(/\b\d+(?:st|nd|rd|th)\s+season\b|\bseason\s*\d+\b|subtitle\s*indonesia|sub\s*indo/gi, " ")
         .replace(/第\s*\d+\s*期/g, " ")
-        .replace(/[:.~!?'"’‘“”`\-–—,]/g, " ")
+        .replace(/[:.~!?'"’‘“”`\-–—,\[\]]/g, " ")
         .replace(/\s+/g, " ")
         .toLowerCase()
         .trim();
@@ -292,12 +300,33 @@ function KIT_PICK(results, titles) {
     const full = new Map();
     KIT_AMBIG = null;
     for (const r of results) {
-        const ps = KIT_SEASON(r.title);
+        const ps = KIT_RESULT_SEASON(r);
         const part = KIT_PART(r.title);
         if (!(ps === entrySeason || (ps == null && entrySeason === 1)))
             continue;
         if (entryPart != null && part != null && part !== entryPart)
             continue;
+
+        // Alias Kitsu dengan season eksplisit boleh mencocokkan slug URL,
+        // tetapi hanya jika season kandidat sudah terkonfirmasi sama.
+        const anchors = titles
+            .filter(title => KIT_SEASON(title) === entrySeason)
+            .map(KIT_ANCHOR_KEY)
+            .filter(Boolean);
+        const candidateKey = KIT_ANCHOR_KEY(
+            String(r.title || "") + " " + String(r.url || "").replace(/[-_]+/g, " ")
+        );
+        if (anchors.some(key => candidateKey.includes(key))) {
+            const anchorBase = KIT_BASE(r.title);
+            const anchorKey = KIT_KEY(anchorBase);
+            if (anchorBase) {
+                full.set(anchorKey, r);
+                if (!best || best.score < 3)
+                    best = { item: r, score: 3 };
+            }
+            continue;
+        }
+
         const rb = KIT_BASE(r.title);
         if (!rb)
             continue;
@@ -396,43 +425,68 @@ function KIT_PAGE_TYPE(html) {
 function KIT_ENTRY_SEASON(titles) {
     return titles.map(KIT_SEASON).find(x => x != null) || 1;
 }
+
+function KIT_PAGE_TEXT(html) {
+    return KIT_ANCHOR_KEY(
+        String(html || "")
+            .replace(/<script[\s\S]*?<\/script>/gi, " ")
+            .replace(/<style[\s\S]*?<\/style>/gi, " ")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/&nbsp;|&#160;/gi, " ")
+            .replace(/&amp;/gi, "&")
+            .replace(/&#39;|&apos;/gi, "'")
+            .replace(/&quot;/gi, '"')
+            .replace(/\s+/g, " ")
+    );
+}
+
 async function KIT_VERIFY(results, titles, expectedType) {
     const entrySeason = KIT_ENTRY_SEASON(titles);
     const entryPart = titles.map(KIT_PART).find(x => x != null) ?? null;
-    const want = [...new Set(titles
-        .filter(t => entryPart == null || KIT_PART(t) === entryPart)
-        .map(t => KIT_KEY(KIT_BASE(t)))
-        .filter(k => k.length >= 8))];
-    if (!want.length)
+
+    const anchors = [...new Set(titles
+        .filter(t => KIT_SEASON(t) == null)
+        .map(KIT_ANCHOR_KEY)
+        .filter(k => k.length >= 18))];
+
+    if (!anchors.length)
         return null;
+
     const cands = results.filter(r => {
-        const ps = KIT_SEASON(r.title);
+        const ps = KIT_RESULT_SEASON(r);
         const part = KIT_PART(r.title);
-        return (ps === entrySeason || (ps == null && entrySeason === 1))
+        return (ps === entrySeason || ps == null)
             && (entryPart == null || part == null || part === entryPart);
-    }).slice(0, 2);
+    }).slice(0, 8);
+
     const checked = await Promise.all(cands.map(async r => {
         try {
             const html = await m(r.url, { headers: { Referer: e } });
             KIT_SHOW_CACHE.set(r.url, html);
+
             const pageType = KIT_PAGE_TYPE(html);
-            if (expectedType && pageType && pageType !== expectedType)
+            if (expectedType && pageType !== expectedType)
                 return null;
-            const alt = KIT_ALT_TEXT(html);
-            return want.some(k => alt.includes(k)) ? r : null;
+
+            const pageKey = KIT_PAGE_TEXT(html);
+            return anchors.some(k => pageKey.includes(k)) ? r : null;
         }
         catch (err) {
             return null;
         }
     }));
+
     const hits = checked.filter(Boolean);
+
     if (hits.length > 1) {
         KIT_AMBIG = hits;
         return null;
     }
+
     KIT_AMBIG = null;
     return hits.length === 1 ? hits[0] : null;
 }
+
 async function KIT(raw, epParam) {
     try {
         const mm = String(raw).match(/^kitsu:(\d+)(?::(\d+))?/i);
