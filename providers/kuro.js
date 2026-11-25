@@ -460,17 +460,18 @@ async function KIT_VERIFY(results, titles, expectedType) {
     const anchors = [...new Set(titles
         .filter(t => KIT_SEASON(t) == null)
         .map(KIT_ANCHOR_KEY)
-        .filter(k => k.length >= 18))];
+        .filter(k => k.length >= (expectedType === "movie" ? 8 : 18)))];
 
     if (!anchors.length)
         return null;
 
     const cands = results.filter(r => {
+        if (expectedType === "movie") return true;
         const ps = KIT_RESULT_SEASON(r);
         const part = KIT_PART(r.title);
         return (ps === entrySeason || ps == null)
             && (entryPart == null || part == null || part === entryPart);
-    }).slice(0, 8);
+    }).slice(0, expectedType === "movie" ? 12 : 8);
 
     const checked = await Promise.all(cands.map(async r => {
         try {
@@ -544,9 +545,73 @@ async function KIT(raw, epParam) {
         return [O("Pencarian gagal: " + e.message)];
     }
 }
+
+async function KIT_MOVIE(raw) {
+    try {
+        const mm = String(raw).match(/^kitsu:(\d+)(?::\d+)?$/i);
+        if (!mm)
+            return [O("ID movie Kitsu tidak valid")];
+
+        const kit = await KIT_TITLES(mm[1]);
+        if (kit.type && kit.type !== "movie")
+            return [O("Data Kitsu bukan anime movie: " + kit.type)];
+
+        const titles = kit.titles || [];
+        if (!titles.length)
+            return [O("Judul movie dari Kitsu kosong")];
+
+        KIT_SHOW_CACHE = new Map();
+        const results = await KIT_SEARCH(titles);
+        const pick = await KIT_VERIFY(results, titles, "movie");
+
+        if (!pick) {
+            if (KIT_AMBIG)
+                return [O("Movie memiliki beberapa kandidat: " +
+                    KIT_AMBIG.map(x => x.title).join(" / "))];
+            return [O(KIT_DEBUG(results, titles))];
+        }
+
+        const html = KIT_SHOW_CACHE.get(pick.url) ||
+            await m(pick.url, { headers: { Referer: e } });
+
+        const watch = A(html).map(a => ({
+            url: f(a.tag, "href"),
+            title: c(a.inner)
+        })).find(x =>
+            x.url &&
+            /\/nonton-/i.test(x.url) &&
+            /episode\s*movie|nonton/i.test(x.title)
+        );
+
+        if (!watch)
+            return [O("Halaman movie ditemukan, tetapi link Nonton tidak ditemukan: " + pick.title)];
+
+        const watchUrl = new URL(watch.url, pick.url).href;
+        const streams = await $(watchUrl);
+
+        if (!Array.isArray(streams))
+            return [O("Parser movie tidak menghasilkan daftar stream")];
+
+        const valid = streams.filter(x =>
+            x && typeof x.url === "string" &&
+            /^https?:\/\//i.test(x.url) &&
+            !/test-videos\.co\.uk/i.test(x.url)
+        );
+
+        return valid.length
+            ? valid
+            : [O("Halaman movie ditemukan, tetapi stream valid belum tersedia")];
+
+    } catch (err) {
+        return [O("Movie gagal diproses: " + err.message)];
+    }
+}
+
 async function X(id, type, season, episode) {
     if (String(type) === "movie") {
-        return [O("Kuro hanya mendukung anime serial, bukan film")];
+        if (!/^kitsu:/i.test(String(id)))
+            return [O("ID tidak didukung: Kuro membutuhkan ID Kitsu")];
+        return await KIT_MOVIE(id);
     }
     if (!/^kitsu:/i.test(String(id))) {
         return [O("ID tidak didukung: Kuro membutuhkan ID Kitsu")];
