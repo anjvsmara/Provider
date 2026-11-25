@@ -169,10 +169,10 @@ async function S(t, showCache) { const e = (showCache && showCache.get(t)) || (a
 function x(t) { const e = (t || "").toLowerCase().trim(); if (!e.startsWith("http") || function (t) { const e = (t || "").toLowerCase(); return n.some(t => e.indexOf(t) >= 0); }(e))
     return !1; return !!(e.includes("hidoristream") || e.includes("ayokunjungi") || e.includes("storagehidori") || e.includes("stotagehidori") || e.includes("storeghido") || e.includes("createmyakun123")) && (!(/\/stream\/?$/i.test(e) || /\/files\/?$/i.test(e) || /\/media\/?$/i.test(e) || /\/stream-vid\/?$/i.test(e)) && (e.includes(".m3u8") || e.includes(".mp4") || /\/stream\/[a-z0-9_-]+/i.test(e) || /\/stream-vid\/[a-z0-9_-]+/i.test(e) || /\/files\/[a-z0-9_-]+/i.test(e) || /\/media\/[a-z0-9_-]+/i.test(e))); }
 
-function k(e, n, i) { if (!x(e))
+function k(e, n, i, movieMode) { if (!x(e) || !(e.toLowerCase().includes("storeghido") || (movieMode && e.toLowerCase().includes("ayokunjungi"))))
     return null; const r = n || function (t) { const e = (t || "").match(/(?:_|\/|\.|\b)(2160|1440|1080|720|480|360|240)(?:p|_|\/|\.|\b)/i); return e ? e[1] + "p" : "Auto"; }(e), s = function (t) { const e = (t || "").toLowerCase(); return e.includes("ayokunjungi") ? "Hidori (Server 1)" : e.includes("storeghido") || e.includes("stotagehidori") || e.includes("storagehidori") ? "Hidori (Server 2)" : "Hidori Direct"; }(e); return { name: s, title: `${s} (${r})`, url: e, quality: r, headers: { Referer: i, "User-Agent": t } }; }
 
-async function $(t) { const { html: e, url: n } = await g(t), r = []; let s = e; const o = /<option[^>]+value=["']([A-Za-z0-9+/=]{20,})["']/gi; let u; for (; null !== (u = o.exec(e));) {
+async function $(t, movieMode) { const { html: e, url: n } = await g(t), r = []; let s = e; const o = /<option[^>]+value=["']([A-Za-z0-9+/=]{20,})["']/gi; let u; for (; null !== (u = o.exec(e));) {
     const t = i(u[1]);
     t && t.includes("http") && (s += "\n" + t);
 } const f = /<(?:div|tr|li|p)\b[^>]*class="[^"]*(?:soraddl|soraurlx|dlbox|download|mirror|server)[^"]*"[^>]*>([\s\S]*?)<\/(?:div|tr|li|p)>/gi; let d; for (; null !== (d = f.exec(s));) {
@@ -180,7 +180,7 @@ async function $(t) { const { html: e, url: n } = await g(t), r = []; let s = e;
     for (const i of p(t)) {
         const t = l(i.tag, "href") || l(i.tag, "value");
         if (t && t.startsWith("http")) {
-            const s = k(t, c(a(i.inner)) || e, n);
+            const s = k(t, c(a(i.inner)) || e, n, movieMode);
             s && r.push(s);
         }
     }
@@ -188,17 +188,17 @@ async function $(t) { const { html: e, url: n } = await g(t), r = []; let s = e;
     let t = m[1].trim();
     const e = c(a(m[2])) || c(t);
     if (t.startsWith("http")) {
-        const i = k(t, e, n);
+        const i = k(t, e, n, movieMode);
         i && r.push(i);
     }
 } const y = /<iframe\b[^>]*>/gi; let b; for (; null !== (b = y.exec(s));) {
     const t = l(b[0], "data-litespeed-src") || l(b[0], "data-src") || l(b[0], "src");
     if (t && t.startsWith("http")) {
-        const e = k(t, null, n);
+        const e = k(t, null, n, movieMode);
         e && r.push(e);
     }
 } const w = /https?:\/\/[^"'\s<>]+?(?:\.m3u8|\.mp4|\/stream\/[a-zA-Z0-9_-]+|\/stream-vid\/[a-zA-Z0-9_-]+|\/files\/[a-zA-Z0-9_-]+|\/media\/[a-zA-Z0-9_-]+)(?:\?[^"'\s<>]*)?/gi; let v; for (; null !== (v = w.exec(s));) {
-    const t = k(v[0], null, n);
+    const t = k(v[0], null, n, movieMode);
     t && r.push(t);
 } const S = new Map; for (const t of r) {
     if (!t || !t.url)
@@ -527,9 +527,74 @@ async function KIT(raw, epParam) {
         return [r("Pencarian gagal: " + e.message)];
     }
 }
+
+async function KIT_MOVIE(raw) {
+    try {
+        const mm = String(raw).match(/^kitsu:(\d+)/i);
+        if (!mm) return [r("ID Kitsu movie tidak valid")];
+
+        const kitId = mm[1];
+        const data = JSON.parse(await s("https://kitsu.io/api/edge/anime/" + kitId)).data || {};
+        const at = data.attributes || {};
+
+        if (String(at.subtype || "").toLowerCase() !== "movie")
+            return [r("ID Kitsu tersebut bukan anime movie")];
+
+        const names = at.titles || {};
+        const titles = KIT_OVERRIDE[kitId] ? [KIT_OVERRIDE[kitId]] :
+            [...new Set([names.en_jp, at.canonicalTitle, names.en]
+                .concat(at.abbreviatedTitles || [])
+                .filter(x => x && !/[\u3040-\u30ff\u4e00-\u9fff]/.test(x)))];
+
+        if (!titles.length) return [r("Judul movie Kitsu tidak ditemukan")];
+
+        const search = await KIT_SEARCH(titles);
+        let pick = search.pick;
+
+        if (!pick && search.ambig)
+            return [r("Ada beberapa judul movie yang cocok: " +
+                search.ambig.map(x => x.title).join(" / "))];
+
+        if (!pick) {
+            const verified = await KIT_VERIFY(search.results, titles, search.showCache);
+            if (verified && verified.ambiguous)
+                return [r("Ada beberapa halaman movie yang cocok: " +
+                    verified.ambiguous.map(x => x.title).join(" / "))];
+            pick = verified && verified.item;
+        }
+
+        if (!pick) return [r(KIT_DEBUG(search.results, titles))];
+
+        let html = search.showCache.get(pick.url);
+        if (!html) html = (await g(pick.url)).html;
+
+        const re = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+        let m, watchUrl = "";
+
+        while ((m = re.exec(html))) {
+            const label = a(m[2]);
+            if (!/episode\s*movie/i.test(label)) continue;
+
+            try {
+                watchUrl = new URL(m[1], pick.url).href;
+                break;
+            } catch (_) {}
+        }
+
+        if (!watchUrl)
+            return [r("Halaman movie ditemukan, tetapi tautan Episode Movie belum ditemukan: " + pick.title)];
+
+        const streams = await $(watchUrl, true);
+        return streams.length ? streams :
+            [r("Halaman movie ditemukan, tetapi stream Server 1 tidak tersedia")];
+    } catch (e) {
+        return [r("Pencarian movie gagal: " + e.message)];
+    }
+}
+
 async function _(id, type, season, episode) {
     if (String(type) === "movie") {
-        return [r("Hido hanya mendukung anime serial, bukan film")];
+        return await KIT_MOVIE(id);
     }
     if (!/^kitsu:/i.test(String(id))) {
         return [r("ID tidak didukung: Hido membutuhkan ID Kitsu")];
