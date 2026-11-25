@@ -247,7 +247,20 @@ async function $(t) {
     const f = c.filter(t => !s(t.url) && function (t) { const e = (t || "").toLowerCase(); return a.some(t => e.indexOf(t) >= 0) || w(t); }(t.url));
     if (0 === f.length)
         return c.length > 0 ? "semua host diskip/tidak didukung: " + r.join(",") : u && ("mirror kosong"), k(await R(n, t, new Set));
-    let d = o(await Promise.all(f.map(e => { const n = S(e.url, t, e.quality); return n ? Promise.resolve([n]) : (r = N(e.url, t, e.quality), i = 8e3, "function" != typeof setTimeout ? r : function (p, ms) { let id; return Promise.race([p, new Promise(z => { id = setTimeout(() => z([]), ms); })]).then(v => { clearTimeout(id); return v; }, x => { clearTimeout(id); throw x; }); }(r, i)); var r, i; })));
+    let d = [];
+    const fast = f
+        .filter(e => e.url.indexOf("pixeldrain.com") >= 0 || w(e.url))
+        .map(e => S(e.url, t, e.quality))
+        .filter(Boolean);
+
+    if (fast.length) {
+        d = fast;
+    } else {
+        const mp4 = f.filter(e => e.url.indexOf("mp4upload.com") >= 0);
+        d = o(await Promise.all(
+            mp4.map(e => N(e.url, t, e.quality).catch(() => []))
+        ));
+    }
     if (0 === d.length) {
         "host terdaftar tapi gagal di-resolve (kemungkinan mati/diubah): " + f.map(t => U(t.url)).join(",");
         const e = new Set(f.map(t => t.url));
