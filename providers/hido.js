@@ -222,6 +222,14 @@ function KIT_SEASON(t) {
         return null;
     return ({ II: 2, III: 3, IV: 4, V: 5 })[roman[1].toUpperCase()];
 }
+function KIT_RESULT_SEASON(item) {
+    const titleSeason = KIT_SEASON(item && item.title);
+    if (titleSeason != null) return titleSeason;
+    return KIT_SEASON(String(item && item.url || "").replace(/[-_]+/g, " "));
+}
+function KIT_ANCHOR_KEY(value) {
+    return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
 function KIT_TRAILING_SEASON(t) {
     const match = String(t || "").match(/\s+(\d+)\s*$/);
     return match ? Number(match[1]) : null;
@@ -236,7 +244,7 @@ function KIT_BASE(t, confirmedSeason) {
         .replace(/\b\d+(?:st|nd|rd|th)\s+season\b|\bseason\s*\d+\b|\bpart\s*\d+\b|subtitle\s*indonesia|sub\s*indo/gi, " ")
         .replace(/\s+\b(?:II|III|IV|V)\s*$/i, " ")
         .replace(/第\s*\d+\s*期/g, " ")
-        .replace(/[:.~!?'"’‘“”\x60\-–—,]/g, " ")
+        .replace(/[:.~!?'"’‘“”\x60\-–—,\[\]]/g, " ")
         .replace(/\s+/g, " ")
         .toLowerCase()
         .trim();
@@ -262,7 +270,7 @@ function KIT_PICK(results, titles, requestState) {
     requestState.bestScore = 0;
 
     for (const item of results) {
-        const pageSeason = KIT_SEASON(item.title);
+        const pageSeason = KIT_RESULT_SEASON(item);
         const candidateSeason = pageSeason ?? KIT_TRAILING_SEASON(item.title);
 
         if (explicitSeason != null &&
@@ -271,6 +279,22 @@ function KIT_PICK(results, titles, requestState) {
 
         if (explicitSeason == null && trailingSeasons.length &&
             !trailingSeasons.includes(candidateSeason)) continue;
+
+        // Alias Kitsu yang menyebut season secara eksplisit dapat menjadi jangkar.
+        // Kandidat harus memuat alias tersebut pada judul/URL dan season-nya cocok.
+        const anchors = explicitSeason == null ? [] : titles
+            .filter(title => KIT_SEASON(title) === explicitSeason)
+            .map(KIT_ANCHOR_KEY)
+            .filter(Boolean);
+        const candidateKey = KIT_ANCHOR_KEY(
+            String(item.title || "") + " " + String(item.url || "").replace(/[-_]+/g, " ")
+        );
+        if (anchors.some(key => candidateKey.includes(key))) {
+            full.set(item.url, item);
+            if (!best || best.score < 1)
+                best = { item, score: 1 };
+            continue;
+        }
 
         const bases = titles.map(title => {
             const trailing = KIT_TRAILING_SEASON(title);
@@ -411,31 +435,62 @@ function KIT_ENTRY_SEASON(titles) {
 }
 // Dipakai hanya jika pencocokan judul utama gagal: buka maksimal 2 kandidat yang season-nya cocok,
 // lalu cek apakah daftar "Judul:" halamannya memuat judul Kitsu (termasuk judul Inggris).
+function KIT_PAGE_TITLE(html) {
+    const source = String(html || "")
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ");
+
+    const match =
+        source.match(/<h1\b[^>]*class=["'][^"']*entry-title[^"']*["'][^>]*>([\s\S]*?)<\/h1>/i) ||
+        source.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
+
+    if (!match) return "";
+
+    const title = match[1]
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&(?:#8220|#8221|ldquo|rdquo);/gi, '"');
+
+    return KIT_KEY(KIT_BASE(title));
+}
+
 async function KIT_VERIFY(results, titles, showCache) {
     const entrySeason = KIT_ENTRY_SEASON(titles);
-    const want = [...new Set(titles.map(t => KIT_KEY(KIT_BASE(t))).filter(k => k.length >= 8))];
-    if (!want.length)
-        return null;
+    const want = [...new Set(
+        titles.map(t => KIT_KEY(KIT_BASE(t)))
+            .filter(k => k.length >= 8)
+    )];
+
+    if (!want.length) return null;
+
     const cands = results.filter(r => {
-        const ps = KIT_SEASON(r.title);
-        return entrySeason == null || ps === entrySeason || (ps == null && entrySeason === 1);
-    }).slice(0, 2);
-    // Verifikasi maksimal dua kandidat secara paralel agar fallback tidak menambah
-    // waktu tunggu berurutan. Hasil HTML tetap disimpan untuk dipakai ulang oleh S().
+        const ps = KIT_RESULT_SEASON(r);
+        return entrySeason == null ||
+            ps === entrySeason ||
+            (ps == null && entrySeason === 1);
+    }).slice(0, 8);
+
     const checked = await Promise.all(cands.map(async r => {
         try {
             const html = (await g(r.url)).html;
             showCache.set(r.url, html);
+
             const alt = KIT_ALT_TEXT(html);
-            return want.some(k => alt.includes(k)) ? r : null;
-        }
-        catch (err) {
+            const pageTitle = KIT_PAGE_TITLE(html);
+
+            return want.some(k =>
+                (alt && alt.includes(k)) ||
+                (pageTitle && pageTitle.includes(k))
+            ) ? r : null;
+        } catch (err) {
             return null;
         }
     }));
+
     const hits = checked.filter(Boolean);
+
     if (hits.length > 1)
         return { ambiguous: hits };
+
     return hits.length === 1 ? { item: hits[0] } : null;
 }
 async function KIT(raw, epParam) {
