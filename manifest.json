@@ -8,43 +8,23 @@
       "description": "Streaming",
       "version": "1.0.0",
       "author": "anjvsmara",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
+      "supportedTypes": ["movie", "tv"],
       "filename": "providers/kuro.js",
       "enabled": true,
-      "contentLanguage": [
-        "id"
-      ],
-      "formats": [
-        "m3u8",
-        "mp4"
-      ]
+      "contentLanguage": ["id"],
+      "formats": ["m3u8", "mp4"]
     },
-    {
-  "name": "Anime",
-  "version": "1.0.0",
-  "scrapers": [
     {
       "id": "Same",
       "name": "Same",
       "description": "Streaming",
       "version": "1.0.0",
       "author": "anjvsmara",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
+      "supportedTypes": ["movie", "tv"],
       "filename": "providers/same.js",
       "enabled": true,
-      "contentLanguage": [
-        "id"
-      ],
-      "formats": [
-        "m3u8",
-        "mp4"
-      ]
+      "contentLanguage": ["id"],
+      "formats": ["m3u8", "mp4"]
     },
     {
       "id": "Hido",
@@ -52,19 +32,11 @@
       "description": "Streaming",
       "version": "1.0.0",
       "author": "anjvsmara",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
+      "supportedTypes": ["movie", "tv"],
       "filename": "providers/hido.js",
       "enabled": true,
-      "contentLanguage": [
-        "id"
-      ],
-      "formats": [
-        "m3u8",
-        "mp4"
-      ]
+      "contentLanguage": ["id"],
+      "formats": ["m3u8", "mp4"]
     }
   ]
 }
