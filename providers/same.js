@@ -434,8 +434,10 @@ function findMatches(results, titles, season, mediaType) {
         if (want === 1) {
             items = all.filter(i => i.rawSeason === null || i.rawSeason === 1);
         } else {
-            const exact = all.filter(i => i.rawSeason === want);
-            items = exact.length > 0 ? exact : all.filter(i => i.rawSeason === null);
+            // Keep untagged pages alongside explicit season matches.
+            // A search batch may contain unrelated S2 results; they must not
+            // cause the correct untagged season-specific title to be discarded.
+            items = all.filter(i => i.rawSeason === want || i.rawSeason === null);
         }
     }
 
