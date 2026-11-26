@@ -395,12 +395,12 @@ const TOUGEN_ANKI_TITLE_EQUIVALENTS = [
     ]
 ];
 
-function equivalentTitleKeys(title) {
+function equivalentTitles(title) {
     const key = normalizeTitle(title);
     const group = TOUGEN_ANKI_TITLE_EQUIVALENTS.find(aliases =>
         aliases.some(alias => normalizeTitle(alias) === key)
     );
-    return group ? group.map(normalizeTitle) : [key];
+    return group || [title];
 }
 
 function findMatches(results, titles, season, mediaType) {
@@ -440,9 +440,9 @@ function findMatches(results, titles, season, mediaType) {
     }
 
     const targets = titles
-        .flatMap(t => equivalentTitleKeys(t).map(key => ({
-            key: key,
-            tok: latinTokens(key)
+        .flatMap(t => equivalentTitles(t).map(alias => ({
+            key: normalizeTitle(alias),
+            tok: latinTokens(alias)
         })))
         .filter(t => t.key);
     if (items.length === 0 || targets.length === 0) return [];
