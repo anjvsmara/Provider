@@ -593,18 +593,20 @@ async function KIT(raw, epParam) {
         const eps = await _(pick.url);
         const hit = eps.find(x => x.episodeNum === siteEpisode);
         if (!hit) {
-            const slug = (pick.url.match(/\/anime\/([^\/?#]+)/) || [])[1];
-            if (slug) {
-                try {
-                    const direct = await $(e + "/nonton-" + slug + "-episode-" + siteEpisode + "/");
-                    if (direct.length)
-                        return direct;
-                }
-                catch (err) { }
-            }
-            return [O(eps.length
-                ? "Episode " + siteEpisode + " (Kitsu " + ep + ") belum tersedia di " + pick.title + " (tersedia " + eps.length + " episode)"
-                : "Anime ditemukan, tetapi daftar episode belum tersedia di Kuronime: " + pick.title)];
+            const nums = eps
+                .map(x => x.episodeNum)
+                .filter(x => Number.isFinite(x));
+            const range = nums.length
+                ? Math.min(...nums) + "–" + Math.max(...nums)
+                : null;
+
+            return [O(nums.length
+                ? "Judul ditemukan: " + pick.title
+                    + " | Episode " + siteEpisode + " (Kitsu " + ep + ") tidak tersedia di Kuronime"
+                    + " | Episode terbaca: " + nums.length
+                    + " | Rentang nomor: " + range
+                : "Judul ditemukan: " + pick.title
+                    + " | Daftar episode tidak tersedia atau tidak terbaca di Kuronime")];
         }
         const st = await $(hit.url);
         return st.length ? st : [O("Episode ditemukan, tetapi link stream tidak tersedia")];
