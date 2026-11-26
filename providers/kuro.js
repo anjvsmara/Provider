@@ -322,6 +322,22 @@ function KIT_PICK(results, titles) {
     const full = new Map();
     KIT_AMBIG = null;
 
+    const oneEdit = (a, b) => {
+        if (Math.abs(a.length - b.length) > 1) return false;
+        let i = 0, j = 0, edits = 0;
+        while (i < a.length && j < b.length) {
+            if (a[i] === b[j]) {
+                i++; j++;
+            } else {
+                if (++edits > 1) return false;
+                if (a.length > b.length) i++;
+                else if (b.length > a.length) j++;
+                else { i++; j++; }
+            }
+        }
+        return edits + ((i < a.length || j < b.length) ? 1 : 0) <= 1;
+    };
+
     for (const r of results) {
         const ps = KIT_RESULT_SEASON(r);
         const part = KIT_PART(r.title);
@@ -373,10 +389,19 @@ function KIT_PICK(results, titles) {
                 const pageInEntry =
                     rWords.filter(w => bSet.has(w)).length / rWords.length;
 
-                if (entryInPage < 0.8 || pageInEntry < 0.8)
-                    continue;
+                const nearMatch =
+                    bWords.length >= 3 &&
+                    bWords.length === rWords.length &&
+                    bWords.filter((w, i) => w === rWords[i]).length === bWords.length - 1 &&
+                    bWords.some((w, i) => w !== rWords[i] && oneEdit(w, rWords[i]));
 
-                score = Math.min(entryInPage, pageInEntry) - b.index * 0.001;
+                if (entryInPage < 0.8 || pageInEntry < 0.8) {
+                    if (!nearMatch) continue;
+                }
+
+                score = nearMatch
+                    ? 2.5 - b.index * 0.001
+                    : Math.min(entryInPage, pageInEntry) - b.index * 0.001;
             }
 
             if (score >= 0.999) {
