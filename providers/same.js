@@ -386,6 +386,23 @@ function isSeasonExtension(itemTok, titleTok) {
         itemTok.slice(1).every((w, i) => w === titleTok[i]);
 }
 
+// Exact bilingual title equivalence for Kitsu/Samehadaku naming differences.
+// Keep this deliberately narrow: do not infer matches from shared franchise words.
+const TOUGEN_ANKI_TITLE_EQUIVALENTS = [
+    [
+        "Tougen Anki: Nikko Kegon Falls Arc",
+        "Tougen Anki: Nikko Kegon no Taki-hen"
+    ]
+];
+
+function equivalentTitleKeys(title) {
+    const key = normalizeTitle(title);
+    const group = TOUGEN_ANKI_TITLE_EQUIVALENTS.find(aliases =>
+        aliases.some(alias => normalizeTitle(alias) === key)
+    );
+    return group ? group.map(normalizeTitle) : [key];
+}
+
 function findMatches(results, titles, season, mediaType) {
     const anySeason = season === "any";
     const want = anySeason ? null : (Number(season) > 1 ? Number(season) : 1);
@@ -423,7 +440,10 @@ function findMatches(results, titles, season, mediaType) {
     }
 
     const targets = titles
-        .map(t => ({ key: normalizeTitle(t), tok: latinTokens(t) }))
+        .flatMap(t => equivalentTitleKeys(t).map(key => ({
+            key: key,
+            tok: latinTokens(key)
+        })))
         .filter(t => t.key);
     if (items.length === 0 || targets.length === 0) return [];
 
