@@ -256,7 +256,12 @@ async function searchShows(query) {
             }
         }
 
-        if (!showUrl || seen.has(showUrl)) continue;
+        if (!showUrl) continue;
+
+        const directShow = links.some(a => {
+            const href = absoluteUrl(getAttr(a.tag, "href") || "");
+            return href && /\/anime\/[^/]+\/?$/i.test(href);
+        });
 
         const heading = card.match(/<h[1-4]\b[^>]*>([\s\S]*?)<\/h[1-4]>/i);
         let raw = heading ? stripTags(heading[1]) : "";
@@ -265,6 +270,14 @@ async function searchShows(query) {
             .trim();
 
         if (!raw) continue;
+
+        if (seen.has(showUrl)) {
+            if (directShow) {
+                const existing = shows.find(item => item.url === showUrl);
+                if (existing) existing.title = raw;
+            }
+            continue;
+        }
 
         seen.add(showUrl);
         shows.push({ title: raw, url: showUrl });
@@ -496,11 +509,44 @@ async function getEpisodes(showUrl) {
     const episodeMarker = slug ? "/" + slug + "-episode" : "";
 
     let scope = "";
-    const start = html.search(/class="[^"]*lstepsiode[^"]*"/i);
-    if (start >= 0) {
-        const sub = html.slice(start);
-        const end = sub.search(/id="comments"|class="[^"]*(?:sidebar|footer)[^"]*"/i);
-        scope = end > 0 ? sub.slice(0, end) : sub.slice(0, 200000);
+    let modernEpisodeScope = false;
+
+    const modernMatch = html.match(
+        /<div\b[^>]*class=["'][^"']*max-h-\[520px\][^"']*overflow-y-auto[^"']*custom-scrollbar[^"']*["'][^>]*>/i
+    );
+
+    if (modernMatch) {
+        const open = modernMatch.index;
+        const tags = /<\/?div\b[^>]*>/gi;
+        tags.lastIndex = open;
+
+        let depth = 0;
+        let end = -1;
+        let tag;
+
+        while ((tag = tags.exec(html)) !== null) {
+            if (/^<\/div/i.test(tag[0])) depth--;
+            else depth++;
+
+            if (depth === 0) {
+                end = tags.lastIndex;
+                break;
+            }
+        }
+
+        if (end > open) {
+            scope = html.slice(open, end);
+            modernEpisodeScope = true;
+        }
+    }
+
+    if (!scope) {
+        const start = html.search(/class="[^"]*lstepsiode[^"]*"/i);
+        if (start >= 0) {
+            const sub = html.slice(start);
+            const end = sub.search(/id="comments"|class="[^"]*(?:sidebar|footer)[^"]*"/i);
+            scope = end > 0 ? sub.slice(0, end) : sub.slice(0, 200000);
+        }
     }
 
     const episodes = [];
@@ -509,7 +555,7 @@ async function getEpisodes(showUrl) {
     const pushFrom = (anchor) => {
         const href = getAttr(anchor.tag, "href") || "";
         if (!/^https?:\/\//i.test(href) || !/episode/i.test(href) || /\/batch\//i.test(href)) return;
-        if (episodeMarker && href.toLowerCase().indexOf(episodeMarker) < 0) return;
+        if (!scope && episodeMarker && href.toLowerCase().indexOf(episodeMarker) < 0) return;
         if (seen.has(href)) return;
         seen.add(href);
 
@@ -522,7 +568,9 @@ async function getEpisodes(showUrl) {
         });
     };
 
-    if (scope) {
+    if (modernEpisodeScope) {
+        for (const a of anchorsIn(scope)) pushFrom(a);
+    } else if (scope) {
         const liRe = /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
         let m;
         while ((m = liRe.exec(scope)) !== null) {
@@ -1279,9 +1327,17 @@ async function getStreams(kitsuInput, mediaType, season, episode) {
         }
 
         failureStage = "EPISODE_METADATA";
-        const pages = await mapLimit(candidates, 3, async match => {
+        const pages = (await mapLimit(candidates, 3, async match => {
             const started = Date.now();
-            const episodes = await getEpisodes(match.url);
+            let episodes;
+
+            try {
+                episodes = await getEpisodes(match.url);
+            } catch (err) {
+                debug("EPISODE PAGE SKIP", match.title + " | " +
+                    match.url + " | " + (err.message || String(err)));
+                return null;
+            }
 
             // A Kitsu entry can be a season-specific anime even when the
             // Samehadaku page title does not explicitly contain "Season N".
@@ -1294,7 +1350,7 @@ async function getStreams(kitsuInput, mediaType, season, episode) {
                 " episodes | " + (Date.now() - started) + "ms");
 
             return { match: pageMatch, episodes: episodes };
-        });
+        })).filter(Boolean);
 
         failureStage = "STREAM_CHECK";
         if (seasonNum === 1 && pages.length > 1) {
