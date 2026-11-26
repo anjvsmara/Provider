@@ -813,16 +813,14 @@ async function bloggerStreams(pageUrl) {
         debug("Blogger no 720/1080", { page: pageUrl, itags: itags, qualities: formats.map(f => f.quality), length: html.length });
         return [];
     }
-    const out = [];
-    for (const f of formats) {
-        if (!WANTED_QUALITIES.includes(f.quality)) continue;
+    const checked = await mapLimit(wanted, 2, async f => {
         if (await verifyPlayable(f.url, "https://www.blogger.com/")) {
-            out.push(makeStream("Blogger", f.url, f.quality, "https://www.blogger.com/"));
-        } else {
-            debug("Blogger not playable", f.quality);
+            return makeStream("Blogger", f.url, f.quality, "https://www.blogger.com/");
         }
-    }
-    return out;
+        debug("Blogger not playable", f.quality);
+        return null;
+    });
+    return checked.filter(Boolean);
 }
 
 const SKIP_URL_RE = /doubleclick|googletagmanager|googlesyndication|google-analytics|histats|facebook|twitter|instagram|disqus|fonts\.|jquery|bootstrap|\.(?:css|js|png|jpe?g|gif|svg|ico|webp)(?:$|[?#])/i;
@@ -851,11 +849,14 @@ async function embedStreams(pageUrl, label, quality, referer, depth) {
     const html = await fetchText(pageUrl, { headers: { Referer: referer } });
     const out = [];
 
-    for (const u of directMediaUrls(html, pageUrl)) {
+    const candidates = directMediaUrls(html, pageUrl);
+    const checked = await mapLimit(candidates, 2, async u => {
         if (await verifyPlayable(u, pageUrl)) {
-            out.push(makeStream(label, u, quality, pageUrl));
+            return makeStream(label, u, quality, pageUrl);
         }
-    }
+        return null;
+    });
+    out.push(...checked.filter(Boolean));
 
     if (out.length === 0 && level < 1) {
         const iframes = [];
@@ -909,7 +910,7 @@ async function extractStreamsFromEpisode(episodeUrl) {
 
     debug("Host jobs", jobs.map(j => j.label + " " + (j.quality || "")));
 
-    const jobResults = await mapLimit(jobs, 3, async job => {
+    const runJob = async job => {
         const found = [];
         const started = Date.now();
 
@@ -944,7 +945,30 @@ async function extractStreamsFromEpisode(episodeUrl) {
         debug("HOST DONE", job.label + " | " + found.length +
             " streams | " + (Date.now() - started) + "ms");
         return found;
+    };
+
+    const highJobs = jobs.filter(j => j.kind === "blogger" || j.quality === "1080p");
+    const lowJobs = jobs.filter(j => j.kind !== "blogger" && j.quality === "720p");
+
+    debug("Extractor phase", {
+        high: highJobs.length,
+        fallback720: lowJobs.length
     });
+
+    const highResults = await mapLimit(highJobs, 3, runJob);
+    let jobResults = highResults;
+
+    const has1080pResult = highResults.some(list =>
+        list.some(stream => stream.quality === "1080p")
+    );
+
+    if (!has1080pResult && lowJobs.length > 0) {
+        debug("Extractor fallback", "1080p unavailable; checking 720p");
+        const lowResults = await mapLimit(lowJobs, 3, runJob);
+        jobResults = highResults.concat(lowResults);
+    } else {
+        debug("Extractor fallback", "720p skipped");
+    }
 
     const streams = [];
     const seen = new Set();
