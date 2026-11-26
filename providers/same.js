@@ -430,15 +430,8 @@ function findMatches(results, titles, season, mediaType) {
     });
 
     let items = all;
-    if (!anySeason) {
-        if (want === 1) {
-            items = all.filter(i => i.rawSeason === null || i.rawSeason === 1);
-        } else {
-            // Keep untagged pages alongside explicit season matches.
-            // A search batch may contain unrelated S2 results; they must not
-            // cause the correct untagged season-specific title to be discarded.
-            items = all.filter(i => i.rawSeason === want || i.rawSeason === null);
-        }
+    if (!anySeason && want === 1) {
+        items = all.filter(i => i.rawSeason === null || i.rawSeason === 1);
     }
 
     const targets = titles
@@ -520,6 +513,22 @@ function findMatches(results, titles, season, mediaType) {
         }
     }
 
+
+    if (!anySeason && want > 1) {
+        // Prefer an explicitly numbered page when it actually matches the
+        // requested title. Unrelated S2 search results must not suppress a
+        // unique untagged title (e.g. Tougen Anki's season-specific page).
+        const exactSeason = matches.filter(i => i.rawSeason === want);
+        if (exactSeason.length > 0) return exactSeason;
+
+        // If a matching page explicitly belongs to another season, do not
+        // silently reinterpret it as the requested season.
+        const otherExplicitSeason = matches.some(i => i.rawSeason !== null);
+        if (otherExplicitSeason) return [];
+
+        // Only infer the requested season when every matching page is untagged.
+        return matches.map(i => Object.assign({}, i, { rawSeason: want }));
+    }
 
     return matches;
 }
@@ -1388,9 +1397,6 @@ async function getStreams(kitsuInput, mediaType, season, episode) {
             // A Kitsu entry can be a season-specific anime even when the
             // Samehadaku page title does not explicitly contain "Season N".
             const pageMatch = Object.assign({}, match);
-            if (info.seasonHint && !pageMatch.rawSeason) {
-                pageMatch.rawSeason = seasonNum;
-            }
 
             debug("EPISODE PAGE", match.title + " | " + episodes.length +
                 " episodes | " + (Date.now() - started) + "ms");
