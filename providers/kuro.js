@@ -496,7 +496,6 @@ async function KIT_VERIFY(results, titles, expectedType, movieAliases) {
     const entryPart = titles.map(KIT_PART).find(x => x != null) ?? null;
 
     const anchors = [...new Set(titles
-        .filter(t => KIT_SEASON(t) == null)
         .map(KIT_ANCHOR_KEY)
         .filter(k => k.length >= (expectedType === "movie" ? 8 : 18)))];
 
