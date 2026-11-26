@@ -415,7 +415,7 @@ function findMatches(results, titles, season, mediaType) {
     if (items.length === 0 || targets.length === 0) return [];
 
     const isTv = mediaType === "tv";
-    const extOk = (item, target) => !isTv || isSeasonExtension(item.tok, target.tok);
+    const extOk = (item, target) => !isTv || (item.tok.length >= 2 && isSeasonExtension(item.tok, target.tok));
 
     const matches = [];
     const seen = new Set();
@@ -438,22 +438,53 @@ function findMatches(results, titles, season, mediaType) {
             if (item.key.length < 4) continue;
             const coversEnough = item.key.length >= 0.6 * t.key.length;
             const sub = (item.key.indexOf(t.key) >= 0 && coversEnough && extOk(item, t))
-                || (t.key.indexOf(item.key) >= 0 && coversEnough)
+                || (t.key.indexOf(item.key) >= 0 && coversEnough && extOk(item, t))
                 || (item.baseKey.indexOf(t.key) >= 0 && extOk(item, t));
             if (sub) add(item);
         }
     }
 
+    // Allow a candidate only when its complete title is a
+    // consecutive prefix of the metadata title.
     for (const t of targets) {
-        const tTok = [...new Set(t.tok)];
-        if (tTok.length < 2) continue;
+        const targetTok = t.tok;
         for (const item of items) {
-            const itemSet = new Set(item.tok);
-            const shared = tTok.filter(w => itemSet.has(w)).length;
-            const ratio = shared / tTok.length;
-            if (shared >= 2 && ratio >= 0.5 && extOk(item, t)) add(item);
+            const itemTok = item.tok;
+            let coreLength = itemTok.length;
+
+            while (coreLength > 0) {
+                const w = itemTok[coreLength - 1];
+                if (
+                    SEASON_WORDS.has(w) ||
+                    /^\d+$/.test(w) ||
+                    /^s\d+$/.test(w) ||
+                    /^\d+(st|nd|rd|th)$/.test(w)
+                ) {
+                    coreLength--;
+                } else {
+                    break;
+                }
+            }
+
+            const suffix = itemTok.slice(coreLength);
+            const validSuffix = suffix.every(w =>
+                SEASON_WORDS.has(w) ||
+                /^\d+$/.test(w) ||
+                /^s\d+$/.test(w) ||
+                /^\d+(st|nd|rd|th)$/.test(w)
+            );
+
+            const isPrefix =
+                coreLength >= 2 &&
+                coreLength <= targetTok.length &&
+                itemTok.slice(0, coreLength).every(
+                    (w, i) => w === targetTok[i]
+                );
+
+            if (isPrefix && validSuffix && extOk(item, t)) add(item);
         }
     }
+
 
     return matches;
 }
@@ -1010,11 +1041,12 @@ async function getStreams(kitsuInput, mediaType, season, episode) {
             .replace(/\bseason\s*\d+\b/gi, " ")
             .trim();
 
-        const aniListAliases = await getAniListTitles(info.title);
-        const baseAniListAliases =
+        const [aniListAliases, baseAniListAliases] = await Promise.all([
+            getAniListTitles(info.title),
             normalizeTitle(baseTitle) !== normalizeTitle(info.title)
-                ? await getAniListTitles(baseTitle)
-                : [];
+                ? getAniListTitles(baseTitle)
+                : Promise.resolve([])
+        ]);
 
         const rootAliases = baseAniListAliases.map(v =>
             String(v).split(/\s+[-–—:]\s+/)[0].trim()
@@ -1109,6 +1141,67 @@ async function getStreams(kitsuInput, mediaType, season, episode) {
             seasonNum,
             mediaType
         );
+
+        if (candidates.length === 0) {
+            // Retry with short title prefixes when search results exist
+            // but none of them match the available metadata.
+            const retryQueries = [];
+            const retrySeen = new Set(
+                activeQueries.map(q => q.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim())
+            );
+
+            for (const title of [info.title, baseTitle].concat(searchTitles)) {
+                const words = latinTokens(title);
+                for (const size of [3, 2]) {
+                    if (words.length < size) continue;
+
+                    const query = words.slice(0, size).join(" ");
+                    const key = query.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+                    if (!key || retrySeen.has(key)) continue;
+                    retrySeen.add(key);
+                    retryQueries.push(query);
+
+                    if (retryQueries.length >= 6) break;
+                }
+                if (retryQueries.length >= 6) break;
+            }
+
+            if (retryQueries.length) {
+                debug("SHORT TITLE RETRY", retryQueries);
+
+                const retryBatches = await mapLimit(
+                    retryQueries,
+                    3,
+                    async query => {
+                        const started = Date.now();
+                        const found = await searchWithFallback(query);
+                        debug("RETRY DONE", query + " | " + found.length + " results | " + (Date.now() - started) + "ms");
+                        return found;
+                    }
+                );
+
+                results = results.concat(...retryBatches);
+
+                const retryResultSeen = new Set();
+                results = results.filter(item => {
+                    if (!item || !item.url || retryResultSeen.has(item.url)) return false;
+                    retryResultSeen.add(item.url);
+                    return true;
+                });
+
+                candidates = findMatches(
+                    results,
+                    searchTitles,
+                    seasonNum,
+                    mediaType
+                );
+
+                debug("SHORT TITLE MATCHES", candidates.map(
+                    c => c.title + " | " + c.url
+                ));
+            }
+        }
 
         if (candidates.length === 0) {
             debug("Search fallback", "Tidak ada kandidat; menjalankan probe");
