@@ -294,15 +294,67 @@ async function searchShows(query) {
 async function searchWithFallback(q) {
     const cleaned = cleanQuery(q);
     if (!cleaned || cleaned.toLowerCase() === "sesame" || NON_LATIN_RE.test(cleaned)) return [];
-    let results = await searchShows(cleaned);
+    let results = [];
+    try {
+        results = await searchShows(cleaned);
+    } catch (e) {
+        debug("SEARCH QUERY ERROR", cleaned + " | " + (e.message || String(e)));
+    }
+
     if (results.length === 0) {
         const words = cleaned.split(" ").filter(w => w.length > 0);
         if (words.length > 3) {
-            debug("SEARCH RETRY", words.slice(0, 3).join(" "));
-            results = await searchShows(words.slice(0, 3).join(" "));
+            const retry = words.slice(0, 3).join(" ");
+            debug("SEARCH RETRY", retry);
+            try {
+                results = await searchShows(retry);
+            } catch (e) {
+                debug("SEARCH RETRY ERROR", retry + " | " + (e.message || String(e)));
+            }
         }
     }
     return results;
+}
+
+function buildSearchQueries(infoTitle, baseTitle, searchTitles, seasonNum) {
+    const searchQueries = [];
+    const querySeen = new Set();
+    const queryTitles = [...new Set(
+        [infoTitle, baseTitle].concat(searchTitles || [])
+            .filter(Boolean)
+            .flatMap(title => equivalentTitles(title))
+    )];
+
+    const addSearchQuery = query => {
+        query = String(query || "").replace(/\s+/g, " ").trim();
+        const key = query.toLowerCase()
+            .replace(/×/g, "x")
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim()
+            .replace(/\s+/g, " ");
+        if (query && key && !querySeen.has(key)) {
+            querySeen.add(key);
+            searchQueries.push(query);
+        }
+    };
+
+    for (const title of queryTitles) {
+        let base = String(title || "")
+            .replace(/\b\d+(?:st|nd|rd|th)\s+season\b/gi, " ")
+            .replace(/\bseason\s*\d+\b/gi, " ")
+            .replace(/\b(?:part|cour)\s*\d+\b/gi, " ")
+            .replace(/\b(?:19|20)\d{2}\b/g, " ");
+
+        base = latinTokens(base).join(" ").trim();
+        if (!base) continue;
+
+        addSearchQuery(base);
+        if (seasonNum > 1) {
+            addSearchQuery(base + " s" + seasonNum);
+            addSearchQuery(base + " season " + seasonNum);
+        }
+    }
+    return searchQueries;
 }
 
 function titleVariants(title, seasonNum) {
@@ -1163,40 +1215,15 @@ async function getStreams(kitsuInput, mediaType, season, episode) {
             ).filter(v => v && latinTokens(v).length > 0)
         )];
 
-        // Build search-friendly queries with automatic season variants.
-        const searchQueries = [];
-        const querySeen = new Set();
+        // Search metadata titles and their narrow, explicitly known local-title equivalents.
+        // This makes a known Samehadaku title searchable, not merely matchable after search.
+        const searchQueries = buildSearchQueries(
+            info.title,
+            baseTitle,
+            searchTitles,
+            seasonNum
+        );
 
-        const addSearchQuery = query => {
-            query = String(query || "").replace(/\s+/g, " ").trim();
-            const key = query.toLowerCase()
-                .replace(/×/g, "x")
-                .replace(/[^a-z0-9]+/g, " ")
-                .trim()
-                .replace(/\s+/g, " ");
-            if (query && key && !querySeen.has(key)) {
-                querySeen.add(key);
-                searchQueries.push(query);
-            }
-        };
-
-        for (const title of [info.title, baseTitle].concat(searchTitles)) {
-            let base = String(title || "")
-                .replace(/\b\d+(?:st|nd|rd|th)\s+season\b/gi, " ")
-                .replace(/\bseason\s*\d+\b/gi, " ")
-                .replace(/\b(?:part|cour)\s*\d+\b/gi, " ")
-                .replace(/\b(?:19|20)\d{2}\b/g, " ");
-
-            base = latinTokens(base).join(" ").trim();
-            if (!base) continue;
-
-            addSearchQuery(base);
-
-            if (seasonNum > 1) {
-                addSearchQuery(base + " s" + seasonNum);
-                addSearchQuery(base + " season " + seasonNum);
-            }
-        }
         debug("Kitsu metadata", {
             id: kitsuId,
             title: info.title,
