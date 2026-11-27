@@ -201,6 +201,32 @@ async function _(t) {
     }
     return a;
 }
+
+function HOME_SLUG(t) {
+    return String(t || "").toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+async function HOME_EPISODE(titles, episode) {
+    try {
+        const html = await m(e + "/", { headers: { Referer: e } });
+        const wanted = new Set((titles || []).map(HOME_SLUG).filter(Boolean));
+        for (const a of A(html)) {
+            const href = f(a.tag, "href");
+            if (!href) continue;
+            const path = href.split("?")[0].split("#")[0];
+            const match = path.match(/\/nonton-(.+)-episode-(\d+(?:\.\d+)?)(?:\/|$)/i);
+            if (!match || Number(match[2]) !== Number(episode)) continue;
+            if (!wanted.has(HOME_SLUG(match[1]))) continue;
+            return {
+                title: c(a.inner) || f(a.tag, "title") || match[1],
+                episodeNum: Number(match[2]),
+                url: new URL(href, e).href
+            };
+        }
+    } catch (err) {}
+    return null;
+}
 async function R(t, e, n) {
     const r = [], i = /<iframe\b[^>]*>/gi;
     let a;
@@ -616,7 +642,10 @@ async function KIT(raw, epParam) {
             return [O(KIT_DEBUG(res, titles))];
         }
         const eps = await _(pick.url);
-        const hit = eps.find(x => x.episodeNum === siteEpisode);
+        let hit = eps.find(x => x.episodeNum === siteEpisode);
+        if (!hit) {
+            hit = await HOME_EPISODE(titles.concat([pick.title]), siteEpisode);
+        }
         if (!hit) {
             const nums = eps
                 .map(x => x.episodeNum)
